@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/sync-reading",
+      "path": "/api/sync-reading?secret=yzdwymugftfrooqkcpxzbtdnggxwxyhp",
       "schedule": "*/10 * * * *"
     }
   ]

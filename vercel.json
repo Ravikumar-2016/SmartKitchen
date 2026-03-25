@@ -3,11 +3,5 @@
     "api/*.js": {
       "runtime": "nodejs18.x"
     }
-  },
-  "cron": [
-    {
-      "path": "/api/sync-reading?secret=yzdwymugftfrooqkcpxzbtdnggxwxyhp",
-      "schedule": "*/10 * * * *"
-    }
-  ]
+  }
 }

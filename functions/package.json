@@ -1,0 +1,19 @@
+{
+  "name": "smart-kitchen-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions,database,firestore --config ../firebase.json",
+    "shell": "firebase functions:shell",
+    "deploy": "firebase deploy --only functions --config ../firebase.json",
+    "logs": "firebase functions:log --config ../firebase.json"
+  },
+  "dependencies": {
+    "ai-smart-kitchen": "file:..",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

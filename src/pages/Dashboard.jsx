@@ -7,13 +7,11 @@ import EditProfileModal from '../components/common/EditProfileModal'
 import ProfileMenu from '../components/common/ProfileMenu'
 import { useAuth } from '../context/AuthContext'
 import { fetchItemsByDeviceId } from '../services/itemService'
-import { fetchUserProfile, updateUserProfile } from '../services/userService'
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { user, logOut } = useAuth()
+  const { user, profile, refreshProfile, saveProfile, logOut } = useAuth()
 
-  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
@@ -62,8 +60,7 @@ export default function Dashboard() {
     setLoading(true)
     setLoadError('')
     try {
-      const doc = await fetchUserProfile(user.uid)
-      setProfile(doc)
+      const doc = await refreshProfile(user)
       const missingDevice = !doc?.deviceId || !String(doc.deviceId).trim()
       setDeviceModalOpen(missingDevice)
     } catch (err) {
@@ -91,9 +88,7 @@ export default function Dashboard() {
     setDeviceSaving(true)
     setDeviceError('')
     try {
-      await updateUserProfile(user.uid, { deviceId })
-      const nextProfile = { ...profile, deviceId }
-      setProfile(nextProfile)
+      await saveProfile({ deviceId })
       await loadRecentItems(deviceId)
       setDeviceModalOpen(false)
       setToast({ type: 'success', message: 'Device ID saved successfully.' })
@@ -110,11 +105,9 @@ export default function Dashboard() {
     setEditSaving(true)
     setEditError('')
     try {
-      await updateUserProfile(user.uid, values)
-      const nextProfile = { ...profile, ...values }
-      setProfile(nextProfile)
-      if (values.deviceId) {
-        await loadRecentItems(values.deviceId)
+      const nextProfile = await saveProfile(values)
+      if (nextProfile?.deviceId) {
+        await loadRecentItems(nextProfile.deviceId)
       }
       setEditOpen(false)
       setToast({ type: 'success', message: 'Profile updated.' })

@@ -27,8 +27,10 @@ export async function ensureUserProfile(authUser) {
     await setDoc(userRef, {
       name: authUser.displayName || deriveNameFromEmail(authUser.email),
       email: authUser.email,
+      deviceId: '',
       device_id: '',
       created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
     })
 
     const fresh = await getDoc(userRef)
@@ -48,6 +50,9 @@ export async function ensureUserProfile(authUser) {
   }
   if (!existing.email && authUser.email) {
     updates.email = authUser.email
+  }
+  if (!Object.prototype.hasOwnProperty.call(existing, 'deviceId')) {
+    updates.deviceId = existing.device_id ?? ''
   }
   if (!Object.prototype.hasOwnProperty.call(existing, 'device_id')) {
     updates.device_id = existing.deviceId ?? ''
@@ -99,8 +104,11 @@ export async function updateUserProfile(uid, updates = {}) {
     if (!deviceId) {
       throw new Error('deviceId is required.')
     }
+    payload.deviceId = deviceId
     payload.device_id = deviceId
   }
+
+  payload.updated_at = serverTimestamp()
 
   if (!Object.keys(payload).length) {
     throw new Error('No valid fields provided for update.')

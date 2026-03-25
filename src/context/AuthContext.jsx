@@ -11,13 +11,35 @@ import {
   onAuthChange,
   signUp as firebaseSignUp,
 } from '../services/authService'
-import { ensureUserProfile } from '../services/userService'
+import { ensureUserProfile, fetchUserProfile, updateUserProfile } from '../services/userService'
 
 const AuthContext = createContext(null)
+const PROFILE_STORAGE_KEY = 'smart-kitchen.profile'
+
+function getStoredProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function setStoredProfile(profile) {
+  try {
+    if (!profile) {
+      localStorage.removeItem(PROFILE_STORAGE_KEY)
+      return
+    }
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile))
+  } catch {
+    // Ignore storage failures and continue with in-memory state.
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser]             = useState(null)
-  const [profile, setProfile]       = useState(null)
+  const [profile, setProfile]       = useState(getStoredProfile)
   const [loading, setLoading]       = useState(true) // true until first auth check
 
   useEffect(() => {
@@ -25,6 +47,7 @@ export function AuthProvider({ children }) {
       if (!firebaseUser) {
         setUser(null)
         setProfile(null)
+        setStoredProfile(null)
         setLoading(false)
         return
       }
@@ -41,13 +64,40 @@ export function AuthProvider({ children }) {
     const userProfile = await ensureUserProfile(authUser)
 
     setProfile(userProfile)
+    setStoredProfile(userProfile)
     setLoading(false)
+  }
+
+  async function refreshProfile(nextUser = user) {
+    if (!nextUser?.uid) {
+      setProfile(null)
+      setStoredProfile(null)
+      return null
+    }
+
+    const userProfile = await fetchUserProfile(nextUser.uid)
+    if (!userProfile) {
+      setProfile(null)
+      setStoredProfile(null)
+      return null
+    }
+
+    setProfile(userProfile)
+    setStoredProfile(userProfile)
+    return userProfile
+  }
+
+  async function saveProfile(updates = {}) {
+    if (!user?.uid) throw new Error('You must be logged in to update profile.')
+    await updateUserProfile(user.uid, updates)
+    return refreshProfile(user)
   }
 
   async function logOut() {
     await firebaseLogOut()
     setUser(null)
     setProfile(null)
+    setStoredProfile(null)
   }
 
   async function logIn(email, password) {
@@ -74,6 +124,8 @@ export function AuthProvider({ children }) {
     user,
     profile,
     loading,
+    refreshProfile,
+    saveProfile,
     logIn,
     signUp,
     logOut,

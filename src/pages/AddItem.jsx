@@ -2,8 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { ITEM_SLOTS, createItem, fetchItemsByDeviceId, handleRefill } from '../services/itemService'
 import { useAuth } from '../context/AuthContext'
 
+const PROFILE_STORAGE_KEY = 'smart-kitchen.profile'
+
+function getStoredDeviceId() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
+    if (!raw) return ''
+    const parsed = JSON.parse(raw)
+    return String(parsed?.deviceId ?? parsed?.device_id ?? '').trim()
+  } catch {
+    return ''
+  }
+}
+
 export default function AddItem() {
-  const { user, profile } = useAuth()
+  const { user, profile, loading } = useAuth()
 
   const [form, setForm] = useState({
     itemId: ITEM_SLOTS[0],
@@ -27,7 +40,7 @@ export default function AddItem() {
   const [refillErrorBySlot, setRefillErrorBySlot] = useState({})
   const [toast, setToast] = useState(null)
 
-  const deviceId = profile?.deviceId?.trim() || ''
+  const deviceId = profile?.deviceId?.trim() || getStoredDeviceId()
   const isDeviceReady = Boolean(deviceId)
 
   useEffect(() => {
@@ -37,13 +50,14 @@ export default function AddItem() {
   }, [toast])
 
   useEffect(() => {
+    if (loading) return
     if (!user?.uid || !isDeviceReady) {
       setItems([])
       setItemsLoading(false)
       return
     }
     loadItems()
-  }, [user?.uid, isDeviceReady, deviceId])
+  }, [loading, user?.uid, isDeviceReady, deviceId])
 
   const today = useMemo(() => new Date().toISOString().split('T')[0], [])
 
@@ -196,7 +210,7 @@ export default function AddItem() {
 
           <div className="mb-4 rounded-xl border border-cream-200 bg-cream-50 px-4 py-3">
             <p className="font-body text-sm text-sage-700">
-              Device ID: <span className="font-mono text-sage-900">{deviceId || 'Not set'}</span>
+              Device ID: <span className="font-mono text-sage-900">{loading ? 'Loading...' : (deviceId || 'Not set')}</span>
             </p>
           </div>
 
@@ -213,7 +227,7 @@ export default function AddItem() {
                 disabled={submitting || !availableSlots.length}
               >
                 {ITEM_SLOTS.map((slot) => (
-                  <option key={slot} value={slot} disabled={!availableSlots.includes(slot)}>
+                  <option key={slot} value={slot} disabled={loading || !availableSlots.includes(slot)}>
                     {slot} {!availableSlots.includes(slot) ? '(Configured)' : ''}
                   </option>
                 ))}
@@ -291,7 +305,7 @@ export default function AddItem() {
               </div>
             )}
 
-            <button type="submit" className="btn-primary w-full" disabled={submitting || !isDeviceReady || !availableSlots.length}>
+            <button type="submit" className="btn-primary w-full" disabled={loading || submitting || !isDeviceReady || !availableSlots.length}>
               {submitting ? 'Creating item...' : 'Create Item'}
             </button>
           </form>

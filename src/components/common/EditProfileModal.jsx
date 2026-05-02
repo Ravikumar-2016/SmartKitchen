@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
+import { formatDeviceId } from '../../utils/deviceId'
 
 export default function EditProfileModal({ open, profile, loading, error, onClose, onSave }) {
-  const [form, setForm] = useState({ name: '', deviceId: '' })
+  const [form, setForm] = useState({ name: '', device_id: '' })
   const [localError, setLocalError] = useState('')
 
   useEffect(() => {
     if (open) {
       setForm({
         name: profile?.name || '',
-        deviceId: profile?.deviceId || '',
+        device_id: profile?.device_id || '',
       })
       setLocalError('')
     }
@@ -18,7 +19,10 @@ export default function EditProfileModal({ open, profile, loading, error, onClos
 
   function handleChange(e) {
     const { name, value } = e.target
-    setForm((prev) => ({ ...prev, [name]: value }))
+    setForm((prev) => ({
+      ...prev,
+      [name]: name === 'device_id' ? formatDeviceId(value) : value,
+    }))
     setLocalError('')
   }
 
@@ -27,10 +31,10 @@ export default function EditProfileModal({ open, profile, loading, error, onClos
 
     const payload = {
       name: form.name.trim(),
-      deviceId: form.deviceId.trim(),
+      device_id: formatDeviceId(form.device_id),
     }
 
-    if (!payload.name || !payload.deviceId) {
+    if (!payload.name || !payload.device_id) {
       setLocalError('Name and Device ID are required.')
       return
     }
@@ -67,8 +71,8 @@ export default function EditProfileModal({ open, profile, loading, error, onClos
             </label>
             <input
               type="text"
-              name="deviceId"
-              value={form.deviceId}
+              name="device_id"
+              value={form.device_id}
               onChange={handleChange}
               className="input-field"
               disabled={loading}

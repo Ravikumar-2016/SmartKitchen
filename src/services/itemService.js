@@ -9,8 +9,47 @@ import {
   updateDoc,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { formatDeviceId } from '../utils/deviceId'
+import { evaluateInventory } from './alertService'
+import { syncShoppingList } from './shoppingService'
+import { updateMonthlyAnalytics } from './analyticsService'
 
 const ITEM_SLOTS = ['item_1', 'item_2', 'item_3', 'item_4']
+
+/**
+ * Triggers all background sync operations for a device.
+ */
+async function triggerInventorySync(deviceId) {
+  if (!deviceId) return
+  // We don't await these to prevent blocking the UI, 
+  // but for reliability in some cases we might.
+  await Promise.all([
+    evaluateInventory(deviceId),
+    syncShoppingList(deviceId),
+    updateMonthlyAnalytics(deviceId)
+  ])
+}
+
+/**
+ * Ensures that the device document exists in the top-level 'items' collection.
+ */
+async function ensureDeviceDocument(deviceId) {
+  const deviceRef = doc(db, 'items', deviceId)
+  const snap = await getDoc(deviceRef)
+
+  if (!snap.exists()) {
+    await setDoc(deviceRef, {
+      device_id: deviceId,
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+      status: 'active'
+    })
+  } else {
+    await updateDoc(deviceRef, {
+      updated_at: serverTimestamp()
+    })
+  }
+}
 
 function toNumber(value) {
   const parsed = Number(value)
@@ -19,7 +58,7 @@ function toNumber(value) {
 }
 
 function normalizeDeviceId(value) {
-  return String(value ?? '').trim()
+  return formatDeviceId(value)
 }
 
 function normalizeSlot(value) {
@@ -32,9 +71,10 @@ function normalizeSlot(value) {
 
 export async function createItem(payload) {
   const name = payload?.name?.trim()
-  const deviceId = normalizeDeviceId(payload?.deviceId)
+  const deviceId = normalizeDeviceId(payload?.device_id)
   const itemId = normalizeSlot(payload?.itemId)
   const expiryDate = payload?.expiry_date?.trim() || payload?.expiryDate?.trim()
+  const unit = payload?.unit || 'g'
 
   const capacity = toNumber(payload?.capacity)
   const threshold = toNumber(payload?.threshold ?? payload?.thresholdWeight)
@@ -50,8 +90,9 @@ export async function createItem(payload) {
   }
   if (!expiryDate) throw new Error('Expiry date is required.')
 
-  // Items are stored per-device in a fixed slot doc (item_1..item_4).
-  const itemRef = doc(db, 'devices', deviceId, 'items', itemId)
+  await ensureDeviceDocument(deviceId)
+
+  const itemRef = doc(db, 'items', deviceId, 'slots', itemId)
 
   await setDoc(
     itemRef,
@@ -59,6 +100,7 @@ export async function createItem(payload) {
       name,
       capacity,
       threshold,
+      unit,
       expiry_date: expiryDate,
       current_quantity: 0,
       created_at: serverTimestamp(),
@@ -67,6 +109,7 @@ export async function createItem(payload) {
     { merge: true }
   )
 
+  await triggerInventorySync(deviceId)
   return itemId
 }
 
@@ -74,7 +117,7 @@ export async function fetchItemsByDeviceId(deviceId) {
   const normalizedDeviceId = normalizeDeviceId(deviceId)
   if (!normalizedDeviceId) return []
 
-  const itemsRef = collection(db, 'devices', normalizedDeviceId, 'items')
+  const itemsRef = collection(db, 'items', normalizedDeviceId, 'slots')
   const snap = await getDocs(itemsRef)
 
   const order = new Map(ITEM_SLOTS.map((slot, idx) => [slot, idx]))
@@ -99,8 +142,8 @@ export async function fetchItemsByDeviceId(deviceId) {
     })
 }
 
-export async function handleRefill({ deviceId, itemId, refill_type, quantity_input }) {
-  const normalizedDeviceId = normalizeDeviceId(deviceId)
+export async function handleRefill({ device_id, itemId, refill_type, quantity_input }) {
+  const normalizedDeviceId = normalizeDeviceId(device_id)
   const normalizedItemId = normalizeSlot(itemId)
   const refillType = String(refill_type ?? '').trim().toLowerCase()
   const quantityInput = toNumber(quantity_input)
@@ -115,7 +158,7 @@ export async function handleRefill({ deviceId, itemId, refill_type, quantity_inp
     throw new Error('quantity_input must be greater than zero.')
   }
 
-  const itemRef = doc(db, 'devices', normalizedDeviceId, 'items', normalizedItemId)
+  const itemRef = doc(db, 'items', normalizedDeviceId, 'slots', normalizedItemId)
   const itemSnap = await getDoc(itemRef)
   if (!itemSnap.exists()) {
     throw new Error('Item does not exist for this device.')
@@ -129,7 +172,6 @@ export async function handleRefill({ deviceId, itemId, refill_type, quantity_inp
     throw new Error('Item capacity is missing or invalid.')
   }
 
-  // reset: starts from zero, normal: adds to current quantity.
   const updatedQuantity = refillType === 'reset'
     ? quantityInput
     : previousQuantity + quantityInput
@@ -146,7 +188,6 @@ export async function handleRefill({ deviceId, itemId, refill_type, quantity_inp
     timestamp: serverTimestamp(),
   }
 
-  // Store refill history before updating the source-of-truth quantity.
   const refillsRef = collection(itemRef, 'refills')
   await addDoc(refillsRef, refillPayload)
 
@@ -154,6 +195,8 @@ export async function handleRefill({ deviceId, itemId, refill_type, quantity_inp
     current_quantity: updatedQuantity,
     updated_at: serverTimestamp(),
   })
+
+  await triggerInventorySync(normalizedDeviceId)
 
   return {
     previous_quantity: previousQuantity,
@@ -163,10 +206,9 @@ export async function handleRefill({ deviceId, itemId, refill_type, quantity_inp
   }
 }
 
-// Backward-compatible alias for older callers.
-export async function logRefillEvent({ deviceId, itemId, newQuantity }) {
+export async function logRefillEvent({ device_id, itemId, newQuantity }) {
   return handleRefill({
-    deviceId,
+    device_id,
     itemId,
     refill_type: 'reset',
     quantity_input: newQuantity,
@@ -174,3 +216,4 @@ export async function logRefillEvent({ deviceId, itemId, newQuantity }) {
 }
 
 export { ITEM_SLOTS }
+

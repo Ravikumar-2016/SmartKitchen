@@ -21,6 +21,8 @@ import ItemDetail   from './pages/ItemDetail'
 import Alerts       from './pages/Alerts'
 import ShoppingList from './pages/ShoppingList'
 import AddItem      from './pages/AddItem'
+import Analytics    from './pages/Analytics'
+import EditProfile  from './pages/EditProfile'
 
 export default function App() {
   return (
@@ -38,8 +40,12 @@ export default function App() {
             <Route path="/alerts"        element={<Alerts />}       />
             <Route path="/shopping-list" element={<ShoppingList />} />
             <Route path="/add-item"      element={<AddItem />}      />
+            <Route path="/analytics"     element={<Analytics />}    />
+            <Route path="/edit-profile"  element={<EditProfile />}  />
           </Route>
         </Route>
+
+
 
         {/* ── Fallback: redirect root to dashboard ──────── */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -31,7 +31,7 @@ Path: `Devices/{device_id}/{item_id}/{log_id}`
 {
   "name": "Ravi",
   "email": "ravi@example.com",
-  "device_id": "BC:DD:C2:02:0C:98",
+  "device_id": "BCDDC2020C98",
   "created_at": "server timestamp"
 }
 ```
@@ -40,7 +40,7 @@ Path: `Devices/{device_id}/{item_id}/{log_id}`
 
 ```json
 {
-  "device_id": "BC:DD:C2:02:0C:98",
+  "device_id": "BCDDC2020C98",
   "item_id": "item_1",
   "name": "Rice",
   "capacity": 5000,
@@ -53,7 +53,7 @@ Path: `Devices/{device_id}/{item_id}/{log_id}`
 
 ```json
 {
-  "device_id": "BC:DD:C2:02:0C:98",
+  "device_id": "BCDDC2020C98",
   "item_id": "item_1",
   "date": "2026-03-24",
   "total_consumption": 180.4
@@ -64,7 +64,7 @@ Path: `Devices/{device_id}/{item_id}/{log_id}`
 
 ```json
 {
-  "device_id": "BC:DD:C2:02:0C:98",
+  "device_id": "BCDDC2020C98",
   "item_id": "item_1",
   "date": "2026-03-24",
   "events": [
@@ -169,3 +169,4 @@ For regular sensor logs, post:
 - Keep RTDB and Functions in the same region (`asia-southeast1`) for lower latency.
 - Do not delete raw logs; aggregation is append-only and date-based.
 - The current function uses UTC day keys via `toISOString().slice(0, 10)`.
+- Device IDs are stored in normalized format: remove `:` and `-`, then uppercase.

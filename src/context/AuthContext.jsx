@@ -110,10 +110,22 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function signUp(email, password, displayName) {
+  async function signUp(email, password, displayName, device_id) {
     setLoading(true)
     try {
-      await firebaseSignUp(email, password, displayName)
+      const createdUser = await firebaseSignUp(email, password, displayName)
+      if (createdUser?.uid) {
+        const seededProfile = await ensureUserProfile(createdUser, displayName)
+        if (device_id) {
+          await updateUserProfile(createdUser.uid, { device_id })
+          const freshProfile = await fetchUserProfile(createdUser.uid)
+          setProfile(freshProfile)
+          setStoredProfile(freshProfile)
+        } else {
+          setProfile(seededProfile)
+          setStoredProfile(seededProfile)
+        }
+      }
     } catch (err) {
       setLoading(false)
       throw err

@@ -2,22 +2,27 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { formatDeviceId } from '../utils/deviceId'
 
 export default function Signup() {
   const navigate = useNavigate()
   const { signUp } = useAuth()
-  const [form, setForm]       = useState({ name: '', email: '', password: '', confirm: '' })
+  const [form, setForm]       = useState({ name: '', email: '', device_id: '', password: '', confirm: '' })
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
 
   function handleChange(e) {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
+    const { name, value } = e.target
+    setForm(prev => ({
+      ...prev,
+      [name]: name === 'device_id' ? formatDeviceId(value) : value,
+    }))
     setError('')
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.name || !form.email || !form.password || !form.confirm) {
+    if (!form.name || !form.email || !form.device_id || !form.password || !form.confirm) {
       setError('Please fill in all fields.')
       return
     }
@@ -31,10 +36,10 @@ export default function Signup() {
     }
     setLoading(true)
     try {
-      await signUp(form.email, form.password, form.name)
+      await signUp(form.email, form.password, form.name, form.device_id)
       navigate('/dashboard')
     } catch (err) {
-      setError(friendlyError(err.code))
+      setError(friendlyError(err.code, err.message))
     } finally {
       setLoading(false)
     }
@@ -122,6 +127,21 @@ export default function Signup() {
                 placeholder="you@example.com"
                 className="input-field"
                 autoComplete="email"
+              />
+            </div>
+
+            <div>
+              <label className="block font-display text-sage-700 text-xs font-semibold
+                                uppercase tracking-wider mb-1.5">
+                Device ID
+              </label>
+              <input
+                type="text"
+                name="device_id"
+                value={form.device_id}
+                onChange={handleChange}
+                placeholder="BC:DD:C2:02:0C:98"
+                className="input-field"
               />
             </div>
 
@@ -223,12 +243,14 @@ function getStrength(password) {
   return levels[Math.min(score, 4) - 1] ?? levels[0]
 }
 
-function friendlyError(code) {
+function friendlyError(code, message) {
   const map = {
     'auth/email-already-in-use': 'An account with this email already exists.',
     'auth/invalid-email':        'Please enter a valid email address.',
     'auth/weak-password':        'Password is too weak. Use at least 6 characters.',
     'auth/network-request-failed': 'Network error. Check your connection.',
   }
-  return map[code] ?? 'Something went wrong. Please try again.'
+  if (map[code]) return map[code]
+  if (message) return message
+  return 'Something went wrong. Please try again.'
 }

@@ -1,377 +1,428 @@
-// src/pages/Dashboard.jsx
-
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import DeviceIdModal from '../components/common/DeviceIdModal'
-import EditProfileModal from '../components/common/EditProfileModal'
-import ProfileMenu from '../components/common/ProfileMenu'
+import { 
+  Plus, 
+  AlertTriangle, 
+  Calendar, 
+  RefreshCcw, 
+  ArrowRight,
+  ChevronRight,
+  Package,
+  Weight,
+  History,
+  CheckCircle2,
+  XCircle,
+  Clock
+} from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { fetchItemsByDeviceId } from '../services/itemService'
+import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill } from '../services/itemService'
+import { fetchAlerts } from '../services/alertService'
+import DeviceIdModal from '../components/common/DeviceIdModal'
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { user, profile, refreshProfile, saveProfile, logOut } = useAuth()
+  const { user, profile, refreshProfile, saveProfile } = useAuth()
 
+  const [items, setItems] = useState({})
+  const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
-
   const [deviceModalOpen, setDeviceModalOpen] = useState(false)
-  const [deviceSaving, setDeviceSaving] = useState(false)
-  const [deviceError, setDeviceError] = useState('')
-
-  const [editOpen, setEditOpen] = useState(false)
-  const [editSaving, setEditSaving] = useState(false)
-  const [editError, setEditError] = useState('')
-
-  const [items, setItems] = useState([])
-  const [itemsLoading, setItemsLoading] = useState(false)
-  const [itemsError, setItemsError] = useState('')
-
+  const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState(null)
 
-  useEffect(() => {
-    if (!user?.uid) return
-    loadProfile()
-  }, [user?.uid])
+  const deviceId = profile?.device_id
 
   useEffect(() => {
-    if (!toast) return
-    const timer = setTimeout(() => setToast(null), 2800)
-    return () => clearTimeout(timer)
+    if (!user?.uid) return
+    init()
+  }, [user?.uid, deviceId])
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000)
+      return () => clearTimeout(timer)
+    }
   }, [toast])
 
-  useEffect(() => {
-    const deviceId = profile?.deviceId?.trim()
+  async function init() {
+    if (!profile) await refreshProfile(user)
     if (!deviceId) {
-      setItems([])
-      setItemsError('')
+      setDeviceModalOpen(true)
+      setLoading(false)
       return
     }
-    loadRecentItems(deviceId)
-  }, [profile?.deviceId])
+    loadData()
+  }
 
-  const deviceMissing = useMemo(() => {
-    return !profile?.deviceId || !String(profile.deviceId).trim()
-  }, [profile])
-
-  async function loadProfile() {
-    if (!user?.uid) return
-
+  async function loadData() {
     setLoading(true)
-    setLoadError('')
     try {
-      const doc = await refreshProfile(user)
-      const missingDevice = !doc?.deviceId || !String(doc.deviceId).trim()
-      setDeviceModalOpen(missingDevice)
+      const [itemList, alertList] = await Promise.all([
+        fetchItemsByDeviceId(deviceId),
+        fetchAlerts(deviceId)
+      ])
+      
+      const itemMap = {}
+      itemList.forEach(item => {
+        itemMap[item.id] = item
+      })
+      setItems(itemMap)
+      setAlerts(alertList.slice(0, 4))
     } catch (err) {
-      setLoadError(err?.message || 'Failed to load profile.')
+      console.error('Failed to load dashboard data:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  async function loadRecentItems(deviceId) {
-    setItemsLoading(true)
-    setItemsError('')
-    try {
-      const list = await fetchItemsByDeviceId(deviceId)
-      setItems(list.slice(0, 6))
-    } catch (err) {
-      setItemsError(err?.message || 'Failed to load recent items.')
-    } finally {
-      setItemsLoading(false)
-    }
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await loadData()
+    setRefreshing(false)
+    setToast({ type: 'success', message: 'Data refreshed' })
   }
 
-  async function handleSaveDeviceId(deviceId) {
-    if (!user?.uid || deviceSaving) return
-    setDeviceSaving(true)
-    setDeviceError('')
-    try {
-      await saveProfile({ deviceId })
-      await loadRecentItems(deviceId)
-      setDeviceModalOpen(false)
-      setToast({ type: 'success', message: 'Device ID saved successfully.' })
-    } catch (err) {
-      setDeviceError(err?.message || 'Failed to save Device ID.')
-    } finally {
-      setDeviceSaving(false)
-    }
-  }
-
-  async function handleSaveProfile(values) {
-    if (!user?.uid || editSaving) return
-
-    setEditSaving(true)
-    setEditError('')
-    try {
-      const nextProfile = await saveProfile(values)
-      if (nextProfile?.deviceId) {
-        await loadRecentItems(nextProfile.deviceId)
-      }
-      setEditOpen(false)
-      setToast({ type: 'success', message: 'Profile updated.' })
-    } catch (err) {
-      setEditError(err?.message || 'Failed to update profile.')
-    } finally {
-      setEditSaving(false)
-    }
-  }
-
-  async function handleLogout() {
-    await logOut()
-    navigate('/login')
-  }
+  if (loading) return <DashboardSkeleton />
 
   return (
-    <div className="space-y-6 animate-slide-up">
+    <div className="space-y-10 animate-fade-in relative">
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-slide-down ${
+          toast.type === 'success' ? 'bg-sage-900 text-cream-50' : 'bg-rust-500 text-white'
+        }`}>
+          {toast.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-sage-400" /> : <XCircle className="w-5 h-5" />}
+          <span className="text-sm font-bold tracking-tight">{toast.message}</span>
+        </div>
+      )}
+
       <DeviceIdModal
         open={deviceModalOpen}
-        initialValue={profile?.deviceId || ''}
-        loading={deviceSaving}
-        error={deviceError}
-        onSave={handleSaveDeviceId}
+        initialValue={deviceId || ''}
+        onSave={async (id) => {
+          await saveProfile({ device_id: id })
+          setDeviceModalOpen(false)
+          loadData()
+        }}
       />
 
-      <EditProfileModal
-        open={editOpen}
-        profile={profile}
-        loading={editSaving}
-        error={editError}
-        onClose={() => setEditOpen(false)}
-        onSave={handleSaveProfile}
-      />
-
-      {toast && (
-        <div
-          className={`fixed right-6 bottom-6 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-body
-            ${toast.type === 'error'
-              ? 'bg-rust-500/10 border-rust-500/30 text-rust-600'
-              : 'bg-sage-100 border-sage-300 text-sage-800'}`}
-        >
-          {toast.message}
-        </div>
-      )}
-
-      <div className="flex items-start justify-between gap-4">
+      {/* Header Section */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-sage-500 mb-1">Kitchen Console</p>
-          <h2 className="font-display text-3xl text-sage-900 leading-tight">
-            Welcome, {profile?.name || user?.displayName || 'Kitchen Manager'}
+          <div className="flex items-center gap-2 mb-2">
+            <span className="badge bg-sage-100 text-sage-700 uppercase tracking-tighter">Kitchen Overview</span>
+            <div className="flex items-center gap-1.5 ml-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-sage-400 uppercase tracking-widest">System Online</span>
+            </div>
+          </div>
+          <h2 className="text-4xl font-bold text-sage-950">
+            Welcome, <span className="text-sage-600">{profile?.name || 'Manager'}</span>
           </h2>
-          <p className="font-body text-sage-500 text-sm mt-1">
-            Monitor inventory health and keep your kitchen always ready.
+          <p className="text-sage-500 mt-2 max-w-md font-body">
+            You have <span className="text-sage-950 font-semibold">{alerts.length} active alerts</span> regarding your inventory stock and expiry.
           </p>
         </div>
+        
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleRefresh}
+            className={`btn-secondary p-4 rounded-2xl shadow-sm ${refreshing ? 'animate-spin' : ''}`}
+          >
+            <RefreshCcw className="w-5 h-5 text-sage-600" />
+          </button>
+          <button 
+            onClick={() => navigate('/add-item')}
+            className="btn-primary flex items-center gap-3 shadow-lg shadow-sage-900/10 h-[56px] px-8"
+          >
+            <Plus className="w-5 h-5" />
+            Add Item
+          </button>
+        </div>
+      </header>
 
-        <ProfileMenu
-          name={profile?.name}
-          email={profile?.email || user?.email}
-          onEditProfile={() => setEditOpen(true)}
-          onLogout={handleLogout}
-        />
-      </div>
-
-      {loading && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {[1, 2, 3, 4].map((item) => (
-            <div key={item} className="card p-5 animate-pulse-soft">
-              <div className="h-4 w-24 bg-cream-200 rounded mb-3" />
-              <div className="h-7 w-32 bg-cream-200 rounded" />
-            </div>
+      {/* Inventory Grid */}
+      <section>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-sage-900 flex items-center gap-2">
+            <Package className="w-5 h-5 text-sage-500" />
+            Smart Slots
+          </h3>
+          <span className="text-xs font-mono text-sage-400 bg-white px-3 py-1 rounded-full shadow-sm">
+            Device ID: <span className="text-sage-600 font-bold">{deviceId}</span>
+          </span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {ITEM_SLOTS.map((slotId) => (
+            <SlotCard 
+              key={slotId} 
+              slotId={slotId} 
+              item={items[slotId]} 
+              deviceId={deviceId}
+              onRefill={(msg) => {
+                loadData()
+                setToast({ type: 'success', message: msg || 'Refill successful' })
+              }}
+              onError={(err) => setToast({ type: 'error', message: err })}
+              onAdd={() => navigate('/add-item', { state: { slotId } })}
+            />
           ))}
         </div>
-      )}
+      </section>
 
-      {!loading && loadError && (
-        <div className="card p-5 border-rust-500/30 bg-rust-500/5">
-          <p className="font-body text-rust-600 text-sm">{loadError}</p>
-          <button className="btn-ghost mt-3" onClick={loadProfile}>Retry</button>
-        </div>
-      )}
-
-      {!loading && !loadError && (
-        <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <section className="card p-5">
-              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-sage-500 mb-2">User Profile</p>
-              <p className="font-display text-2xl text-sage-900">{profile?.name || user?.displayName || 'Kitchen User'}</p>
-              <p className="font-body text-sm text-sage-500 mt-1">{profile?.email || user?.email || 'No email available'}</p>
-            </section>
-
-            <section className="card p-5">
-              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-sage-500 mb-2">Device Status</p>
-              <p className="font-display text-2xl text-sage-900">
-                {deviceMissing ? 'Not Set' : 'Connected'}
-              </p>
-              <p className="font-body text-sm text-sage-500 mt-1 break-all">
-                {deviceMissing ? 'Add your Device ID to enable tracking.' : profile?.deviceId}
-              </p>
-            </section>
-
-            <section className="card p-5">
-              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-sage-500 mb-2">Account</p>
-              <p className="font-display text-xl text-sage-900">{profile?.email || user?.email}</p>
-              <p className="font-body text-sm text-sage-500 mt-1">Inventory tracking is active for your configured device.</p>
-            </section>
+      {/* Bottom Section: Alerts & Quick Stats */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Alerts Feed */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xl font-bold text-sage-900">Recent Alerts</h3>
+            <button 
+              onClick={() => navigate('/alerts')}
+              className="text-sage-500 text-sm font-semibold flex items-center gap-1 hover:text-sage-700 transition-colors"
+            >
+              View Feed <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
-
-          <section className="card p-5 relative overflow-hidden">
-            <div className="absolute -top-16 -right-16 w-56 h-56 rounded-full bg-sage-100" />
-            <div className="relative">
-              <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-sage-500 mb-3">Quick Actions</p>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <ActionButton
-                  title="Add Items"
-                  desc="Register pantry items"
-                  icon="＋"
-                  disabled={deviceMissing}
-                  onClick={() => navigate('/add-item')}
-                />
-                <ActionButton
-                  title="View Alerts"
-                  desc="See low stock warnings"
-                  icon="⚡"
-                  disabled={deviceMissing}
-                  onClick={() => navigate('/alerts')}
-                />
-                <ActionButton
-                  title="Shopping List"
-                  desc="Open auto-generated list"
-                  icon="◈"
-                  disabled={deviceMissing}
-                  onClick={() => navigate('/shopping-list')}
-                />
-                <ActionButton
-                  title="Edit Profile"
-                  desc="Update kitchen settings"
-                  icon="✎"
-                  disabled={false}
-                  onClick={() => setEditOpen(true)}
-                />
+          
+          <div className="space-y-3">
+            {alerts.length > 0 ? (
+              alerts.map((alert) => (
+                <AlertRow key={alert.id} alert={alert} />
+              ))
+            ) : (
+              <div className="card p-8 text-center bg-sage-50/50 border-dashed border-2">
+                <p className="text-sage-400 font-medium font-body italic">All systems normal. No active alerts.</p>
               </div>
-              {deviceMissing && (
-                <p className="font-body text-sm text-rust-600 mt-3">
-                  Device ID is required before inventory tracking features can be used.
-                </p>
-              )}
+            )}
+          </div>
+        </div>
+
+        {/* Quick Actions / Summary */}
+        <div className="space-y-4">
+          <h3 className="text-xl font-bold text-sage-900">Stats Overview</h3>
+          <div className="glass-card p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <span className="text-sage-500 text-sm font-body">Total Items</span>
+              <span className="text-2xl font-bold text-sage-900">{Object.keys(items).length}</span>
             </div>
-          </section>
-
-          <section className="card p-5">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-sage-500 mb-1">Recent Items</p>
-                <h3 className="font-display text-2xl text-sage-900">Inventory Snapshot</h3>
-              </div>
-              <button className="btn-ghost" onClick={() => navigate('/add-item')}>
-                Manage Items
-              </button>
+            <div className="h-px bg-sage-900/5" />
+            <div className="flex items-center justify-between">
+              <span className="text-sage-500 text-sm font-body">Low Stock</span>
+              <span className={`text-2xl font-bold ${alerts.some(a => a.type === 'LOW_STOCK') ? 'text-rust-500' : 'text-sage-900'}`}>
+                {alerts.filter(a => a.type === 'LOW_STOCK').length}
+              </span>
             </div>
-
-            {deviceMissing && (
-              <div className="rounded-xl border border-rust-500/30 bg-rust-500/5 px-4 py-3 text-rust-600 text-sm font-body">
-                Add Device ID to start seeing your created items.
-              </div>
-            )}
-
-            {!deviceMissing && itemsLoading && (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {[1, 2, 3].map((s) => (
-                  <div key={s} className="border border-cream-200 rounded-xl p-4 animate-pulse-soft">
-                    <div className="h-4 w-24 bg-cream-200 rounded mb-2" />
-                    <div className="h-3 w-28 bg-cream-200 rounded mb-2" />
-                    <div className="h-3 w-16 bg-cream-200 rounded" />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!deviceMissing && !itemsLoading && itemsError && (
-              <div className="rounded-xl border border-rust-500/30 bg-rust-500/5 px-4 py-3 text-rust-600 text-sm font-body">
-                {itemsError}
-              </div>
-            )}
-
-            {!deviceMissing && !itemsLoading && !itemsError && items.length === 0 && (
-              <div className="rounded-xl border border-cream-200 bg-cream-50 px-4 py-5 text-center">
-                <p className="font-display text-sage-900 text-lg">No items created yet</p>
-                <p className="font-body text-sage-500 text-sm mt-1">Create your first item from Add Item.</p>
-              </div>
-            )}
-
-            {!deviceMissing && !itemsLoading && !itemsError && items.length > 0 && (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {items.map((item) => (
-                  <article key={item.id} className="border border-cream-200 rounded-xl p-4 bg-white">
-                    <p className="font-display text-lg text-sage-900 leading-tight">{item.name}</p>
-                    <p className="font-mono text-xs text-sage-500 mt-0.5">{item.itemCode}</p>
-                    <div className="mt-3 grid grid-cols-2 gap-y-1 text-sm font-body">
-                      <p className="text-sage-500">Capacity</p>
-                      <p className="text-sage-800 text-right">{item.capacity}</p>
-                      <p className="text-sage-500">Current</p>
-                      <p className="text-sage-800 text-right">{item.current_weight ?? 'Unknown'}</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+            <button 
+              onClick={() => navigate('/shopping-list')}
+              className="w-full btn-secondary mt-2 flex items-center justify-center gap-2 group h-[52px]"
+            >
+              Generate Shopping List
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-function ActionButton({ title, desc, icon, disabled, onClick }) {
+function SlotCard({ slotId, item, deviceId, onRefill, onError, onAdd }) {
+  if (!item) {
+    return (
+      <button 
+        onClick={onAdd}
+        className="card p-6 border-dashed border-2 bg-sage-50/30 hover:bg-sage-50 hover:border-sage-300 transition-all text-center flex flex-col items-center justify-center group h-64"
+      >
+        <div className="w-12 h-12 rounded-full bg-white border border-sage-200 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+          <Plus className="w-6 h-6 text-sage-400" />
+        </div>
+        <p className="text-sage-500 font-bold uppercase tracking-widest text-[10px] mb-1">Slot {slotId.split('_')[1]}</p>
+        <p className="text-sage-400 text-sm font-body">Tap to configure item</p>
+      </button>
+    )
+  }
+
+  const fillPercentage = Math.min(100, (item.current_quantity / item.capacity) * 100)
+  const isLow = item.current_quantity <= item.threshold
+
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="text-left bg-white/80 border border-cream-200 rounded-xl p-4 hover:border-sage-300 hover:shadow-sm
-                 transition-all duration-200 disabled:opacity-55 disabled:cursor-not-allowed"
-    >
-      <div className="w-9 h-9 rounded-lg bg-sage-100 text-sage-700 flex items-center justify-center mb-3">
-        {icon}
+    <div className={`card overflow-hidden group hover:translate-y-[-4px] transition-all duration-300 ${isLow ? 'border-rust-200 bg-rust-50/5' : ''}`}>
+      <div className="p-6 pb-4">
+        <div className="flex items-start justify-between mb-4">
+          <div className="px-3 py-1 bg-sage-100 rounded-full text-[10px] font-mono font-bold text-sage-600 uppercase tracking-wider">
+            Slot {slotId.split('_')[1]}
+          </div>
+          {isLow && (
+            <div className="animate-pulse">
+              <AlertTriangle className="w-5 h-5 text-rust-500" />
+            </div>
+          )}
+        </div>
+        
+        <h4 className="text-xl font-bold text-sage-950 truncate mb-1">{item.name}</h4>
+        <div className="flex items-center gap-1.5 text-sage-400 text-xs font-medium">
+          <Weight className="w-3 h-3" />
+          <span>{item.current_quantity} / {item.capacity} {item.unit || 'g'}</span>
+        </div>
       </div>
-      <p className="font-display text-sage-900 text-base leading-tight">{title}</p>
-      <p className="font-body text-sage-500 text-sm mt-1">{desc}</p>
+
+      {/* Progress Section */}
+      <div className="px-6 py-4 bg-sage-50/30">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-bold text-sage-400 uppercase tracking-widest">Stock Level</span>
+          <span className={`text-xs font-bold ${isLow ? 'text-rust-500' : 'text-sage-700'}`}>{Math.round(fillPercentage)}%</span>
+        </div>
+        <div className="h-2 rounded-full bg-sage-200/50 overflow-hidden">
+          <div 
+            className={`h-full transition-all duration-700 ease-out ${isLow ? 'bg-rust-500' : 'bg-sage-600'}`}
+            style={{ width: `${fillPercentage}%` }}
+          />
+        </div>
+        <div className="mt-4 flex flex-col gap-2">
+           <RefillButton item={item} deviceId={deviceId} onRefill={onRefill} onError={onError} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RefillButton({ item, deviceId, onRefill, onError }) {
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [amount, setAmount] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleAction = async (type) => {
+    if (!deviceId) return onError('Device ID is required for refill.')
+    
+    setLoading(true)
+    try {
+      await handleRefill({
+        device_id: deviceId,
+        itemId: item.id,
+        refill_type: type,
+        quantity_input: type === 'reset' ? item.capacity : Number(amount)
+      })
+      setShowConfirm(false)
+      setAmount('')
+      onRefill(type === 'reset' ? `Reset ${item.name} to full capacity` : `Added ${amount}${item.unit || 'g'} to ${item.name}`)
+    } catch (err) {
+      onError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (showConfirm) {
+    return (
+      <div className="animate-in space-y-2">
+        <div className="flex gap-2">
+          <input 
+            type="number" 
+            placeholder="Qty"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full px-4 py-2 bg-white border border-sage-200 rounded-xl text-sm focus:ring-4 focus:ring-sage-500/10 transition-all font-bold placeholder:font-normal"
+          />
+          <button 
+            disabled={loading || !amount}
+            onClick={() => handleAction('normal')}
+            className="px-5 py-2 bg-sage-900 text-white rounded-xl text-xs font-bold disabled:opacity-50 hover:bg-sage-950 transition-colors shadow-lg shadow-sage-900/10"
+          >
+            Add
+          </button>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            disabled={loading}
+            onClick={() => handleAction('reset')}
+            className="flex-1 px-3 py-2 bg-sage-100 text-sage-900 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-sage-200 transition-colors"
+          >
+            Reset to Max
+          </button>
+          <button 
+            disabled={loading}
+            onClick={() => { setShowConfirm(false); setAmount(''); }}
+            className="px-3 py-2 text-sage-400 text-[10px] font-bold uppercase tracking-wider hover:text-sage-600 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <button 
+      onClick={() => setShowConfirm(true)}
+      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-sage-200 text-sage-600 font-bold text-xs hover:bg-sage-900 hover:text-cream-50 hover:border-sage-900 transition-all group shadow-sm bg-white"
+    >
+      <History className="w-3.5 h-3.5 group-hover:rotate-[-45deg] transition-transform" />
+      Quick Refill
     </button>
   )
 }
 
-// ─── Shared placeholder component used by all stub pages ───────────────────
+function AlertRow({ alert }) {
+  const isExpiry = alert.type === 'EXPIRY'
+  const Icon = isExpiry ? Clock : AlertTriangle
 
-export function PlaceholderPage({ emoji, title, description, badge }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-      {/* Icon circle */}
-      <div className="w-24 h-24 rounded-3xl bg-sage-100 border-2 border-sage-200
-                      flex items-center justify-center text-5xl mb-6 shadow-inner">
-        {emoji}
+    <div className="card p-5 flex items-center gap-5 hover:shadow-md transition-shadow cursor-default group border-sage-100">
+      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-105 ${
+        isExpiry ? 'bg-amber-100 text-amber-600' : 'bg-rust-100 text-rust-600'
+      }`}>
+        <Icon className="w-6 h-6" />
       </div>
-
-      {/* Badge */}
-      <span className="inline-block font-mono text-[10px] tracking-widest uppercase
-                       bg-cream-200 text-sage-500 px-3 py-1 rounded-full mb-3">
-        Coming in {badge}
-      </span>
-
-      <h2 className="font-display font-bold text-sage-900 text-3xl mb-3">{title}</h2>
-      <p className="font-body text-sage-500 text-sm max-w-xs leading-relaxed">
-        {description}
-      </p>
-
-      {/* Decorative dots */}
-      <div className="flex gap-2 mt-10">
-        {[...Array(3)].map((_, i) => (
-          <div
-            key={i}
-            className="w-2 h-2 rounded-full bg-sage-300 animate-pulse-soft"
-            style={{ animationDelay: `${i * 0.3}s` }}
-          />
-        ))}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`text-[9px] font-bold uppercase tracking-widest ${isExpiry ? 'text-amber-600' : 'text-rust-600'}`}>
+            {alert.type.replace('_', ' ')}
+          </span>
+          <span className="text-sage-300">/</span>
+          <span className="text-sage-400 text-[10px] font-mono">{new Date(alert.created_at?.toDate() || Date.now()).toLocaleDateString()}</span>
+        </div>
+        <p className="text-sage-900 font-bold text-sm truncate font-body">{alert.message}</p>
       </div>
     </div>
   )
 }
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-10 animate-pulse">
+      <div className="flex flex-col gap-4">
+        <div className="h-10 w-48 bg-cream-200 rounded-xl" />
+        <div className="h-6 w-96 bg-cream-200 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="h-64 bg-cream-100 rounded-[2rem] border border-cream-200" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-3">
+          {[1, 2].map(i => <div key={i} className="h-20 bg-cream-100 rounded-2xl" />)}
+        </div>
+        <div className="h-56 bg-cream-100 rounded-[2rem]" />
+      </div>
+    </div>
+  )
+}
+
+export function PlaceholderPage({ emoji, title, description, badge }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+      <div className="w-24 h-24 rounded-[2.5rem] bg-sage-50 border border-sage-100
+                      flex items-center justify-center text-5xl mb-6 shadow-soft">
+        {emoji}
+      </div>
+      <span className="badge bg-cream-200 text-sage-600 mb-3">{badge}</span>
+      <h2 className="text-3xl font-bold text-sage-950 mb-3">{title}</h2>
+      <p className="text-sage-500/80 text-sm max-w-xs leading-relaxed font-body">
+        {description}
+      </p>
+    </div>
+  )
+}
+

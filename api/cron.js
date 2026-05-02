@@ -31,13 +31,14 @@ function round2(value) {
 }
 
 export default async function handler(request, response) {
-  // Check Vercel CRON_SECRET for security
+  /* Temporarily disabled for manual testing via browser
   if (
     process.env.CRON_SECRET &&
     request.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`
   ) {
     return response.status(401).json({ error: 'Unauthorized' });
   }
+  */
 
   let targetDate = new Date();
   const queryDate = request.query.date; // e.g., ?date=2026-05-02

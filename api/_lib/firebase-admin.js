@@ -4,9 +4,10 @@ import admin from 'firebase-admin';
 if (!admin.apps.length) {
   try {
     // Attempt to initialize using environment variables securely stored in Vercel
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_ADMIN_KEY;
+    if (serviceAccount) {
       admin.initializeApp({
-        credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY))
+        credential: admin.credential.cert(JSON.parse(serviceAccount))
       });
     } else {
       // Fallback: If deployed in an environment where GOOGLE_APPLICATION_CREDENTIALS is set automatically

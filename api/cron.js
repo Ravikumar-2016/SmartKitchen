@@ -46,11 +46,19 @@ function round2(value) {
 }
 
 export default async function handler(request, response) {
-  if (
-    process.env.CRON_SECRET &&
-    request.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
-    return response.status(401).json({ error: 'Unauthorized' });
+  // Authorization check (can be Bearer token OR query param for browser testing)
+  const authHeader = request.headers.authorization;
+  const queryKey = request.query.key;
+  const expectedSecret = process.env.CRON_SECRET;
+
+  if (expectedSecret) {
+    const isAuthorized = 
+      authHeader === `Bearer ${expectedSecret}` || 
+      queryKey === expectedSecret;
+
+    if (!isAuthorized) {
+      return response.status(401).json({ error: 'Unauthorized' });
+    }
   }
 
   let targetDate = new Date();

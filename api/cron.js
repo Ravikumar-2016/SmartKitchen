@@ -5,8 +5,23 @@ const NOISE_THRESHOLD_GRAMS = 5;
 
 function normalizeReading(input) {
   if (!input || typeof input !== 'object') return null;
-  const timestamp = Number(input.timestamp);
-  const weight = Number(input.weight);
+  
+  // Handle the new field names
+  const weight = Number(input.curr_weight ?? input.weight);
+  
+  // Handle IST string timestamp "DD/MM/YYYY, HH:mm:ss"
+  let timestamp = input.timestamp;
+  if (typeof timestamp === 'string') {
+    // We keep the string for sorting/filtering if needed, 
+    // but convert to numeric for calculations
+    const [datePart, timePart] = timestamp.split(', ');
+    const [d, m, y] = datePart.split('/');
+    const [h, min, s] = timePart.split(':');
+    timestamp = new Date(y, m - 1, d, h, min, s).getTime();
+  } else {
+    timestamp = Number(timestamp);
+  }
+
   return { timestamp: timestamp || Date.now(), weight };
 }
 
@@ -31,14 +46,12 @@ function round2(value) {
 }
 
 export default async function handler(request, response) {
-  /* Temporarily disabled for manual testing via browser
   if (
     process.env.CRON_SECRET &&
     request.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`
   ) {
     return response.status(401).json({ error: 'Unauthorized' });
   }
-  */
 
   let targetDate = new Date();
   const queryDate = request.query.date; // e.g., ?date=2026-05-02
@@ -57,31 +70,29 @@ export default async function handler(request, response) {
   console.log('Starting daily aggregation via API', { dateStr, startOfDay, endOfDay });
 
   try {
-    const itemsSnapshot = await db.collection('items').get();
-    if (itemsSnapshot.empty) {
+    // Use collectionGroup to find ALL item slots for ALL users
+    const slotsSnapshot = await db.collectionGroup('slots').get();
+    
+    if (slotsSnapshot.empty) {
       return response.status(200).json({ status: 'No items to process' });
     }
 
-    const itemDocs = itemsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      data: doc.data()
-    }));
-
-    for (const itemDoc of itemDocs) {
-      const deviceId = itemDoc.data.device_id;
-      const itemId = itemDoc.data.item_id;
-      const autoRefillThreshold = getAutoRefillThreshold(itemDoc.data);
-      const capacity = toNumber(itemDoc.data.capacity) || 10000;
+    for (const slotDoc of slotsSnapshot.docs) {
+      const itemId = slotDoc.id; // item_1, item_2, etc.
+      const deviceId = slotDoc.ref.parent.parent.id; // The Device ID (User ID)
+      const itemData = slotDoc.data();
+      
+      const autoRefillThreshold = getAutoRefillThreshold(itemData);
+      const capacity = toNumber(itemData.capacity) || 10000;
 
       if (!deviceId || !itemId) continue;
 
       try {
         const logsRef = db.collection('Kitchen_Readings').doc(deviceId).collection(itemId);
-        const logsSnapshot = await logsRef
-          .where('timestamp', '>=', startOfDay)
-          .where('timestamp', '<=', endOfDay)
-          .orderBy('timestamp', 'asc')
-          .get();
+        
+        // Simplified: Fetch all documents in the item collection.
+        // Since we use hour_00, hour_01 etc as IDs, they sort naturally.
+        const logsSnapshot = await logsRef.orderBy(admin.firestore.FieldPath.documentId(), 'asc').get();
 
         const readings = [];
         logsSnapshot.forEach(doc => {
@@ -134,18 +145,22 @@ export default async function handler(request, response) {
 
         dailyConsumption = round2(dailyConsumption);
 
-        const docId = `${deviceId}_${itemId}_${dateStr}`;
-        await db.collection('daily_consumption').doc(docId).set({
-          user_id: deviceId, 
-          item_id: itemId,
-          date: dateStr,
-          consumption: dailyConsumption,
-          readings_count: readingsCount,
-          valid_consumption_events: validEventsCount,
-          total_refill_detected: totalRefillDetected,
-          status: status,
-          created_at: admin.firestore.FieldValue.serverTimestamp()
-        });
+        // Save to the new structured path: days_consumption / deviceId / itemId / date
+        await db.collection('days_consumption')
+          .doc(deviceId)
+          .collection(itemId)
+          .doc(dateStr)
+          .set({
+            user_id: deviceId, 
+            item_id: itemId,
+            date: dateStr,
+            consumption: dailyConsumption,
+            readings_count: readingsCount,
+            valid_consumption_events: validEventsCount,
+            total_refill_detected: totalRefillDetected,
+            status: status,
+            created_at: admin.firestore.FieldValue.serverTimestamp()
+          });
 
         // 1. Update Monthly Analytics
         const monthKey = dateStr.substring(0, 7); // "YYYY-MM"

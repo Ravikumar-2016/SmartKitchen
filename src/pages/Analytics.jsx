@@ -47,8 +47,12 @@ export default function Analytics() {
       }
 
       if (currentData) {
-        const d = new Date(currentData.month + '-01')
-        setCurrentMonth(d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).toUpperCase())
+        if (currentData.month.startsWith('Cycle')) {
+          setCurrentMonth(currentData.month.toUpperCase())
+        } else {
+          const d = new Date(currentData.month + '-01')
+          setCurrentMonth(d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).toUpperCase())
+        }
         
         const chartData = []
         let colorIdx = 0
@@ -183,12 +187,6 @@ export default function Analytics() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button 
-            onClick={handleInjectReadings}
-            className="btn-secondary flex items-center gap-2 h-[44px] px-6 !rounded-xl text-xs shadow-lg"
-          >
-            Inject Today's Readings
-          </button>
           <button 
             onClick={handleSync}
             disabled={syncing}

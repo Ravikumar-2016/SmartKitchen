@@ -47,7 +47,9 @@ export default function ShoppingList() {
   </div>
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-fade-in">
+    <div className="max-w-3xl mx-auto animate-fade-in relative">
+      {/* --- Screen View --- */}
+      <div className="space-y-8 print:hidden">
       {/* Hero Stats */}
       <div className="glass-card p-10 flex flex-col items-center text-center overflow-hidden relative">
         <div className="absolute top-0 right-0 p-8 opacity-5">
@@ -102,16 +104,46 @@ export default function ShoppingList() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs font-bold text-sage-400 uppercase mb-0.5">Required</p>
-                  <p className="text-lg font-bold text-sage-900">+{item.required_quantity}</p>
+                  <p className="text-lg font-bold text-sage-900">+{Math.round(item.required_quantity)}</p>
                 </div>
               </div>
             ))}
           </div>
 
-          <button className="w-full py-6 border-2 border-dashed border-cream-200 rounded-[2rem] text-sage-400 font-bold flex items-center justify-center gap-2 hover:bg-sage-50 hover:border-sage-300 transition-all">
+          <button 
+            onClick={() => window.print()}
+            className="w-full py-6 border-2 border-dashed border-cream-200 rounded-[2rem] text-sage-400 font-bold flex items-center justify-center gap-2 hover:bg-sage-50 hover:border-sage-300 transition-all">
             <Printer className="w-5 h-5" />
             Print Checklist
           </button>
+        </div>
+      )}
+      </div>
+
+      {/* --- Print View --- */}
+      {list?.items?.length > 0 && (
+        <div className="hidden print:block font-sans text-black pt-8">
+          <div className="text-center mb-10">
+            <h1 className="text-3xl font-bold mb-2">Smart Kitchen Shopping List</h1>
+            <p className="text-gray-500">Date: {new Date().toLocaleDateString()}</p>
+          </div>
+          
+          <table className="w-full border-collapse border border-gray-300 text-left">
+            <thead>
+              <tr className="bg-gray-100 border-b border-gray-300">
+                <th className="p-4 font-bold border-r border-gray-300">Item Name</th>
+                <th className="p-4 font-bold">Amount to Purchase</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.items.map((item, idx) => (
+                <tr key={idx} className="border-b border-gray-300">
+                  <td className="p-4 border-r border-gray-300 text-lg font-medium">{item.item_name}</td>
+                  <td className="p-4 font-mono text-lg">{Math.round(item.required_quantity)} {item.unit || 'g'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

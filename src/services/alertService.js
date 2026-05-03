@@ -6,10 +6,15 @@ import {
   where, 
   serverTimestamp,
   deleteDoc,
-  doc
+  doc,
+  onSnapshot
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { fetchItemsByDeviceId } from './itemService'
+
+function round2(val) {
+  return Math.round((val + Number.EPSILON) * 100) / 100
+}
 
 /**
  * Checks all items for a device and generates alerts for:
@@ -28,12 +33,14 @@ export async function evaluateInventory(deviceId) {
   items.forEach(item => {
     // 1. Check Low Stock
     if (item.current_quantity <= item.threshold && item.threshold > 0) {
+      const amountToBuy = Math.max(0, item.capacity - item.current_quantity)
       alerts.push({
+        id: `${deviceId}_${item.id}_LOW_STOCK`,
         device_id: deviceId,
         item_id: item.id,
         item_name: item.name,
         type: 'LOW_STOCK',
-        message: `${item.name} is running low (${item.current_quantity}${item.unit || ''} remaining)`,
+        message: `${item.name} is running low. Please purchase ${round2(amountToBuy)}${item.unit || 'g'} to refill.`,
         created_at: serverTimestamp()
       })
     }
@@ -44,6 +51,7 @@ export async function evaluateInventory(deviceId) {
       if (expiryDate <= expiryThreshold) {
         const isExpired = expiryDate <= today
         alerts.push({
+          id: `${deviceId}_${item.id}_EXPIRY`,
           device_id: deviceId,
           item_id: item.id,
           item_name: item.name,
@@ -57,27 +65,38 @@ export async function evaluateInventory(deviceId) {
     }
   })
 
-  // Optional: Deduplicate or clear old alerts before adding new ones
-  // For simplicity now, we just return the alerts and let the caller handle persistence
-  // or we can persist them here. Let's persist them.
   await syncAlertsToFirestore(deviceId, alerts)
 
   return alerts
 }
 
+import { setDoc } from 'firebase/firestore'
+
 async function syncAlertsToFirestore(deviceId, newAlerts) {
   const alertsRef = collection(db, 'alerts')
   
-  // 1. Clear existing alerts for this device to prevent duplicates
+  // 1. Fetch existing alerts for this device
   const q = query(alertsRef, where('device_id', '==', deviceId))
   const existingAlerts = await getDocs(q)
   
-  const deletePromises = existingAlerts.docs.map(d => deleteDoc(doc(db, 'alerts', d.id)))
-  await Promise.all(deletePromises)
+  const newAlertIds = new Set(newAlerts.map(a => a.id))
+  
+  const promises = []
 
-  // 2. Add new unique alerts
-  const addPromises = newAlerts.map(alert => addDoc(alertsRef, alert))
-  await Promise.all(addPromises)
+  // 2. Delete alerts that are no longer active
+  existingAlerts.docs.forEach(d => {
+    if (!newAlertIds.has(d.id)) {
+      promises.push(deleteDoc(doc(db, 'alerts', d.id)))
+    }
+  })
+
+  // 3. Upsert new/active alerts using deterministic IDs
+  newAlerts.forEach(alert => {
+    const { id, ...alertData } = alert
+    promises.push(setDoc(doc(db, 'alerts', id), alertData, { merge: true }))
+  })
+
+  await Promise.all(promises)
 }
 
 export async function fetchAlerts(deviceId) {
@@ -86,4 +105,15 @@ export async function fetchAlerts(deviceId) {
   const q = query(alertsRef, where('device_id', '==', deviceId))
   const snap = await getDocs(q)
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+export function subscribeToAlerts(deviceId, onUpdate) {
+  if (!deviceId) return () => {}
+  const alertsRef = collection(db, 'alerts')
+  const q = query(alertsRef, where('device_id', '==', deviceId))
+  
+  return onSnapshot(q, (snap) => {
+    const updatedAlerts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    onUpdate(updatedAlerts)
+  })
 }

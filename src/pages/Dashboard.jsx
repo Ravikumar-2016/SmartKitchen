@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
   Plus, 
@@ -12,11 +12,15 @@ import {
   History,
   CheckCircle2,
   XCircle,
-  Clock
+  Clock,
+  Bell,
+  Zap,
+  RotateCcw,
+  Brain
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill } from '../services/itemService'
-import { fetchAlerts } from '../services/alertService'
+import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill, subscribeToLatestWeights, resetDeviceSmartVariables, subscribeToItems, processConsumptionEvent } from '../services/itemService'
+import { fetchAlerts, subscribeToAlerts } from '../services/alertService'
 import DeviceIdModal from '../components/common/DeviceIdModal'
 
 export default function Dashboard() {
@@ -29,6 +33,8 @@ export default function Dashboard() {
   const [deviceModalOpen, setDeviceModalOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState(null)
+  // Track previous weight per slot to detect genuine consumption (box lift + replace)
+  const slotPrevWeightRef = useRef({})
 
   const deviceId = profile?.device_id
 
@@ -43,6 +49,91 @@ export default function Dashboard() {
       return () => clearTimeout(timer)
     }
   }, [toast])
+
+  useEffect(() => {
+    if (!deviceId) return
+    const unsub = subscribeToItems(deviceId, (updatedItems) => {
+      setItems(prev => {
+        const newMap = { ...prev }
+        Object.keys(updatedItems).forEach(id => {
+          newMap[id] = { 
+            // Start with current state (preserves is_live and other UI flags)
+            ...(prev[id] || {}), 
+            // Overwrite with fresh data from Firestore (metrics, name, capacity, etc)
+            ...updatedItems[id],
+            // Explicitly ensure is_live persists from sensor listener
+            is_live: prev[id]?.is_live ?? false
+          }
+        })
+        return newMap
+      })
+    })
+    return () => unsub()
+  }, [deviceId])
+
+  useEffect(() => {
+    if (!deviceId) return
+    const unsub = subscribeToAlerts(deviceId, (updatedAlerts) => {
+      // Sort by newest first and limit to 4
+      const sorted = updatedAlerts.sort((a, b) => {
+        const timeA = a.created_at?.toDate?.()?.getTime() || 0
+        const timeB = b.created_at?.toDate?.()?.getTime() || 0
+        return timeB - timeA
+      })
+      setAlerts(sorted.slice(0, 4))
+    })
+    return () => unsub()
+  }, [deviceId])
+
+  useEffect(() => {
+    if (!deviceId) return
+    const unsub = subscribeToLatestWeights(deviceId, async (itemId, weightRaw) => {
+      // Real weight = Live Weight - Box Weight (25g)
+      const weight = Math.max(0, Number(weightRaw) - 25)
+
+      // 1. Update live weight on UI immediately
+      setItems(prev => {
+        const item = prev[itemId]
+        if (!item) return prev
+        return {
+          ...prev,
+          [itemId]: { ...item, current_quantity: weight, current_weight: weight, is_live: true }
+        }
+      })
+
+      // 2. Only process consumption when weight drops by >=4g from last reading
+      // Track RAW weight for accurate diffs and processing
+      const prev = slotPrevWeightRef.current[itemId]
+      const currRaw = Number(weightRaw)
+      const prevVal = Number(prev ?? 0)
+
+      if (currRaw < 10) return // Box is lifted, don't update prev or process consumption
+
+      // Initialize on first reading
+      if (prev === undefined) {
+        slotPrevWeightRef.current[itemId] = currRaw
+        // Send initial weight to backend so persistentWeight isn't 0
+        try {
+          await processConsumptionEvent(deviceId, itemId, currRaw)
+        } catch (err) {
+          console.error('Initial consumption processing error:', err)
+        }
+        return
+      }
+
+      const diff = prevVal - currRaw
+      if (diff >= 4.0 || diff <= -10) {
+        // Weight changed meaningfully (consumption or refill) — process it
+        slotPrevWeightRef.current[itemId] = currRaw
+        try {
+          await processConsumptionEvent(deviceId, itemId, currRaw)
+        } catch (err) {
+          console.error('Consumption processing error:', err)
+        }
+      }
+    })
+    return () => unsub()
+  }, [deviceId])
 
   async function init() {
     if (!profile) await refreshProfile(user)
@@ -75,11 +166,46 @@ export default function Dashboard() {
     }
   }
 
+  const handleProcessAI = async () => {
+    setRefreshing(true)
+    try {
+      // In development, we might need to use a direct call if env is set
+      const secret = import.meta.env.VITE_CRON_SECRET || 'simulation_secret'
+      const res = await fetch(`/api/cron?key=${secret}`)
+      if (!res.ok) throw new Error('AI processing failed')
+      
+      setToast({ type: 'success', message: 'AI Analysis Complete! Metrics updated.' })
+      await loadData()
+    } catch (err) {
+      console.error(err)
+      setToast({ type: 'error', message: 'AI Processing failed. Ensure your local server is running.' })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const handleRefresh = async () => {
     setRefreshing(true)
     await loadData()
     setRefreshing(false)
     setToast({ type: 'success', message: 'Data refreshed' })
+  }
+
+  const handleReset = async () => {
+    if (!window.confirm(
+      '⚠️ TOTAL RESET: This will permanently delete ALL data for this device — including sensor readings, consumption history, analytics, refill history, alerts, and shopping list.\n\nThe AI will start learning from scratch. This cannot be undone.\n\nAre you absolutely sure?'
+    )) return
+    
+    setRefreshing(true)
+    try {
+      await resetDeviceSmartVariables(deviceId)
+      setToast({ type: 'success', message: '✅ Total Reset complete. Everything cleared. AI is starting fresh.' })
+      await init()
+    } catch (err) {
+      setToast({ type: 'error', message: err.message })
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   if (loading) return <DashboardSkeleton />
@@ -125,6 +251,22 @@ export default function Dashboard() {
         </div>
         
         <div className="flex items-center gap-3">
+          <button 
+            onClick={handleProcessAI}
+            title="Process AI Metrics Now"
+            disabled={refreshing}
+            className={`btn-secondary p-4 rounded-2xl shadow-sm border-emerald-100 text-emerald-600 hover:bg-emerald-50 ${refreshing ? 'animate-pulse' : ''}`}
+          >
+            <Brain className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={handleReset}
+            title="Reset AI Training"
+            disabled={refreshing}
+            className={`btn-secondary p-4 rounded-2xl shadow-sm border-rust-100 text-rust-600 hover:bg-rust-50 ${refreshing ? 'animate-pulse' : ''}`}
+          >
+            <RotateCcw className="w-5 h-5" />
+          </button>
           <button 
             onClick={handleRefresh}
             className={`btn-secondary p-4 rounded-2xl shadow-sm ${refreshing ? 'animate-spin' : ''}`}
@@ -228,6 +370,27 @@ export default function Dashboard() {
 }
 
 function SlotCard({ slotId, item, deviceId, onRefill, onError, onAdd }) {
+  const [highlight, setHighlight] = useState(false)
+  const prevWeightRef = useRef(item?.current_quantity)
+
+  useEffect(() => {
+    // Trigger highlight on ANY meaningful update (quantity, threshold, or days_left)
+    // This makes the UI feel 'alive' when AI recalculates everything
+    const currentVal = `${item?.current_quantity}-${item?.threshold}-${item?.days_left}`
+    
+    if (!prevWeightRef.current) {
+      prevWeightRef.current = currentVal
+      return
+    }
+
+    if (prevWeightRef.current !== currentVal) {
+      setHighlight(true)
+      const timer = setTimeout(() => setHighlight(false), 1200)
+      prevWeightRef.current = currentVal
+      return () => clearTimeout(timer)
+    }
+  }, [item?.current_quantity, item?.threshold, item?.days_left])
+
   if (!item) {
     return (
       <button 
@@ -243,44 +406,76 @@ function SlotCard({ slotId, item, deviceId, onRefill, onError, onAdd }) {
     )
   }
 
-  const fillPercentage = Math.min(100, (item.current_quantity / item.capacity) * 100)
-  const isLow = item.current_quantity <= item.threshold
+  const daysLeft = item.days_left ?? 30
+  const isLow = item.current_quantity <= item.threshold && item.threshold > 0
+  
+  // Box is lifted if live weight is significantly less than box weight (25g)
+  // We use current_weight which already has 25g subtracted, so if it's < 0 (effectively 0)
+  // we check if the raw weight was < 10g. 
+  // Actually, let's just say if real weight is 0 and it's live, it's either empty or lifted.
+  // But a more robust way is to check if it's < 5g (raw)
+  const isLifted = item.current_quantity <= 0 && item.is_live 
 
   return (
-    <div className={`card overflow-hidden group hover:translate-y-[-4px] transition-all duration-300 ${isLow ? 'border-rust-200 bg-rust-50/5' : ''}`}>
-      <div className="p-6 pb-4">
+    <div className={`card overflow-hidden group hover:translate-y-[-4px] transition-all duration-300 relative
+      ${isLow ? 'bg-red-50 border-red-200 shadow-sm shadow-red-100' : 'bg-green-50 border-green-100'} 
+      ${highlight ? 'animate-slot-update z-10' : ''}`}>
+      
+      {isLifted && (
+        <div className="absolute inset-0 bg-sage-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center p-6 text-center z-20 animate-in">
+          <div className="w-16 h-16 rounded-full bg-rust-500/20 border border-rust-500 flex items-center justify-center mb-4 animate-bounce">
+            <Package className="w-8 h-8 text-rust-500" />
+          </div>
+          <h5 className="text-white font-bold text-lg mb-1">Box Lifted!</h5>
+          <p className="text-cream-100/70 text-[10px] leading-relaxed uppercase tracking-widest font-bold">
+            Please keep your box back on the slot
+          </p>
+        </div>
+      )}
+      <div className="p-6 pb-2">
         <div className="flex items-start justify-between mb-4">
-          <div className="px-3 py-1 bg-sage-100 rounded-full text-[10px] font-mono font-bold text-sage-600 uppercase tracking-wider">
+          <div className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider ${isLow ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
             Slot {slotId.split('_')[1]}
           </div>
-          {isLow && (
-            <div className="animate-pulse">
-              <AlertTriangle className="w-5 h-5 text-rust-500" />
-            </div>
+          {item.is_live && (
+            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase animate-pulse ${isLow ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>Live</span>
           )}
         </div>
         
-        <h4 className="text-xl font-bold text-sage-950 truncate mb-1">{item.name}</h4>
-        <div className="flex items-center gap-1.5 text-sage-400 text-xs font-medium">
+        <h4 className={`text-xl font-bold truncate mb-1 ${isLow ? 'text-red-800' : 'text-slate-900'}`}>{item.name}</h4>
+        <div className={`flex items-center gap-1.5 text-xs font-medium ${isLow ? 'text-red-400' : 'text-blue-400'}`}>
           <Weight className="w-3 h-3" />
-          <span>{item.current_quantity} / {item.capacity} {item.unit || 'g'}</span>
+          <span>{Math.round(item.current_quantity)} / {Math.round(item.capacity)} {item.unit || 'g'}</span>
         </div>
       </div>
 
-      {/* Progress Section */}
-      <div className="px-6 py-4 bg-sage-50/30">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-bold text-sage-400 uppercase tracking-widest">Stock Level</span>
-          <span className={`text-xs font-bold ${isLow ? 'text-rust-500' : 'text-sage-700'}`}>{Math.round(fillPercentage)}%</span>
+      {/* AI Metrics Section */}
+      <div className="px-6 py-4 flex flex-col gap-2.5">
+        {/* Row 1: Threshold */}
+        <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-blue-50/50 border-blue-100/50 text-blue-600'}`}>
+          <div className="flex items-center gap-2">
+            <Bell className="w-3 h-3" />
+            <span className="uppercase tracking-wider">AI Threshold</span>
+          </div>
+          <span className="text-xs">{Math.round(item.threshold || 0)} {item.unit || 'g'}</span>
         </div>
-        <div className="h-2 rounded-full bg-sage-200/50 overflow-hidden">
-          <div 
-            className={`h-full transition-all duration-700 ease-out ${isLow ? 'bg-rust-500' : 'bg-sage-600'}`}
-            style={{ width: `${fillPercentage}%` }}
-          />
+
+        {/* Row 2: Avg Rate */}
+        <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-sky-50/50 border-sky-100/50 text-sky-600'}`}>
+          <div className="flex items-center gap-2">
+            <Zap className="w-3 h-3" />
+            <span className="uppercase tracking-wider">Avg Usage</span>
+          </div>
+          <span className="text-xs">{Math.round(item.avg_consumption || 0)}{item.unit || 'g'} / use</span>
         </div>
-        <div className="mt-4 flex flex-col gap-2">
-           <RefillButton item={item} deviceId={deviceId} onRefill={onRefill} onError={onError} />
+
+        {/* Row 3: Estimated Time */}
+        <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-indigo-50/50 border-indigo-100/50 text-indigo-600'}`}>
+          <div className="flex items-center gap-2">
+            <Clock className="w-3 h-3" />
+            <span className="uppercase tracking-wider">Estimated</span>
+          </div>
+          <span className="text-xs">~{daysLeft} uses left</span>
         </div>
       </div>
     </div>

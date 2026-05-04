@@ -15,8 +15,7 @@ import {
   Clock,
   Bell,
   Zap,
-  RotateCcw,
-  Brain
+  RotateCcw
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill, subscribeToLatestWeights, resetDeviceSmartVariables, subscribeToItems, processConsumptionEvent, simulateExpiryDecrement, resetItemExpiry } from '../services/itemService'
@@ -189,24 +188,6 @@ export default function Dashboard() {
       console.error('Failed to load dashboard data:', err)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleProcessAI = async () => {
-    setRefreshing(true)
-    try {
-      // In development, we might need to use a direct call if env is set
-      const secret = import.meta.env.VITE_CRON_SECRET || 'simulation_secret'
-      const res = await fetch(`/api/cron?key=${secret}`)
-      if (!res.ok) throw new Error('AI processing failed')
-      
-      setToast({ type: 'success', message: 'AI Analysis Complete! Metrics updated.' })
-      await loadData()
-    } catch (err) {
-      console.error(err)
-      setToast({ type: 'error', message: 'AI Processing failed. Ensure your local server is running.' })
-    } finally {
-      setRefreshing(false)
     }
   }
 

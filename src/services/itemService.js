@@ -285,7 +285,9 @@ export async function createItem(payload) {
       capacity,
       threshold, // Initial default, will be updated by AI logic
       unit,
+      price_per_unit: payload.price_per_unit ? Number(payload.price_per_unit) : 0,
       expiry_date: expiryDate,
+      max_expiry_days: payload.max_expiry_days || 30,
       current_quantity: 0,
       persistent_weight: 0,
       avg_consumption: 0,
@@ -299,6 +301,45 @@ export async function createItem(payload) {
 
   await triggerInventorySync(deviceId)
   return itemId
+}
+
+export async function updateItem(payload) {
+  const deviceId = normalizeDeviceId(payload?.device_id)
+  const itemId = normalizeSlot(payload?.itemId)
+  
+  if (!deviceId || !itemId) throw new Error('Device ID and Slot ID are required.')
+
+  const itemRef = doc(db, 'items', deviceId, 'slots', itemId)
+  
+  const updates = {
+    name: payload.name?.trim(),
+    capacity: toNumber(payload.capacity),
+    unit: payload.unit,
+    price_per_unit: payload.price_per_unit ? Number(payload.price_per_unit) : 0,
+    max_expiry_days: Number(payload.max_expiry_days || 30),
+    updated_at: serverTimestamp()
+  }
+
+  await updateDoc(itemRef, updates)
+  await triggerInventorySync(deviceId)
+  return itemId
+}
+
+export async function deleteItem(deviceId, itemId) {
+  const normalizedDeviceId = normalizeDeviceId(deviceId)
+  const normalizedItemId = normalizeSlot(itemId)
+  
+  if (!normalizedDeviceId || !normalizedItemId) throw new Error('Device ID and Slot ID are required.')
+
+  const itemRef = doc(db, 'items', normalizedDeviceId, 'slots', normalizedItemId)
+  
+  // Hard delete (reset to empty state essentially, or just delete the doc)
+  // In this flat structure, we can just delete the slot document.
+  await deleteDoc(itemRef)
+  
+  // Also cleanup alerts for this item
+  await triggerInventorySync(normalizedDeviceId)
+  return true
 }
 
 export async function fetchLatestWeights(deviceId) {
@@ -461,8 +502,15 @@ export async function handleRefill({ device_id, itemId, refill_type, quantity_in
   const refillsRef = collection(itemRef, 'refills')
   await addDoc(refillsRef, refillPayload)
 
+  // Reset Expiry Date to Max Expiry Days from NOW
+  const maxDays = Number(itemData.max_expiry_days || 30)
+  const newExpiry = new Date()
+  newExpiry.setDate(newExpiry.getDate() + maxDays)
+  const newExpiryStr = newExpiry.toISOString().split('T')[0]
+
   await updateDoc(itemRef, {
     current_quantity: updatedQuantity,
+    expiry_date: newExpiryStr,
     updated_at: serverTimestamp(),
   })
 
@@ -568,5 +616,58 @@ export async function resetDeviceSmartVariables(deviceId) {
   await Promise.all(promises)
 }
 
-export { ITEM_SLOTS }
+/**
+ * SIMULATION: Decrements expiry_date by 1 day for all items of a device.
+ */
+export async function simulateExpiryDecrement(deviceId) {
+  const normalizedDeviceId = normalizeDeviceId(deviceId)
+  if (!normalizedDeviceId) return
 
+  const itemsRef = collection(db, 'items', normalizedDeviceId, 'slots')
+  const snap = await getDocs(itemsRef)
+  
+  const batch = writeBatch(db)
+  
+  snap.forEach(dSnap => {
+    const data = dSnap.data()
+    if (data.expiry_date) {
+      const current = new Date(data.expiry_date)
+      current.setDate(current.getDate() - 1)
+      const newDateStr = current.toISOString().split('T')[0]
+      
+      batch.update(dSnap.ref, {
+        expiry_date: newDateStr,
+        updated_at: serverTimestamp()
+      })
+    }
+  })
+
+  await batch.commit()
+  await triggerInventorySync(normalizedDeviceId)
+}
+
+export async function resetItemExpiry(deviceId, itemId) {
+  const normalizedDeviceId = normalizeDeviceId(deviceId)
+  const normalizedItemId = normalizeSlot(itemId)
+  if (!normalizedDeviceId || !normalizedItemId) return
+
+  const itemRef = doc(db, 'items', normalizedDeviceId, 'slots', normalizedItemId)
+  const itemSnap = await getDoc(itemRef)
+  if (!itemSnap.exists()) return
+
+  const data = itemSnap.data()
+  const maxDays = Number(data.max_expiry_days || 30)
+  
+  const newExpiry = new Date()
+  newExpiry.setDate(newExpiry.getDate() + maxDays)
+  const newExpiryStr = newExpiry.toISOString().split('T')[0]
+
+  await updateDoc(itemRef, {
+    expiry_date: newExpiryStr,
+    updated_at: serverTimestamp()
+  })
+
+  await triggerInventorySync(normalizedDeviceId)
+}
+
+export { ITEM_SLOTS }

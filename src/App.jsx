@@ -21,6 +21,7 @@ import ItemDetail   from './pages/ItemDetail'
 import Alerts       from './pages/Alerts'
 import ShoppingList from './pages/ShoppingList'
 import AddItem      from './pages/AddItem'
+import ManageItems   from './pages/ManageItems'
 import Analytics    from './pages/Analytics'
 import EditProfile  from './pages/EditProfile'
 
@@ -40,6 +41,8 @@ export default function App() {
             <Route path="/alerts"        element={<Alerts />}       />
             <Route path="/shopping-list" element={<ShoppingList />} />
             <Route path="/add-item"      element={<AddItem />}      />
+            <Route path="/edit-item/:slotId" element={<AddItem />}   />
+            <Route path="/manage-items"  element={<ManageItems />}  />
             <Route path="/analytics"     element={<Analytics />}    />
             <Route path="/edit-profile"  element={<EditProfile />}  />
           </Route>

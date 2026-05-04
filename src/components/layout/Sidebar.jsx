@@ -7,7 +7,8 @@ import {
   BarChart3, 
   LogOut,
   Leaf,
-  User
+  User,
+  Settings2
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/dashboard',     icon: LayoutDashboard, label: 'Dashboard'     },
   { to: '/alerts',        icon: Bell,            label: 'Alerts'        },
   { to: '/shopping-list', icon: ShoppingCart,    label: 'Shopping List' },
+  { to: '/manage-items',  icon: Settings2,       label: 'Manage Items'  },
   { to: '/analytics',     icon: BarChart3,       label: 'Analytics'     },
   { to: '/add-item',      icon: PlusCircle,      label: 'Add Item'      },
   { to: '/edit-profile',  icon: User,            label: 'Edit Profile'  },

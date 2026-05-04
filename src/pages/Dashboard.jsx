@@ -19,7 +19,7 @@ import {
   Brain
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill, subscribeToLatestWeights, resetDeviceSmartVariables, subscribeToItems, processConsumptionEvent } from '../services/itemService'
+import { fetchItemsByDeviceId, ITEM_SLOTS, handleRefill, subscribeToLatestWeights, resetDeviceSmartVariables, subscribeToItems, processConsumptionEvent, simulateExpiryDecrement, resetItemExpiry } from '../services/itemService'
 import { fetchAlerts, subscribeToAlerts } from '../services/alertService'
 import DeviceIdModal from '../components/common/DeviceIdModal'
 
@@ -146,6 +146,21 @@ export default function Dashboard() {
     return () => unsub()
   }, [deviceId])
 
+  // Simulation: Reduce expiry by 1 day every 30 seconds
+  useEffect(() => {
+    if (!deviceId) return
+    const interval = setInterval(async () => {
+      console.log('⏳ Simulation: Reducing expiry dates by 1 day...')
+      try {
+        await simulateExpiryDecrement(deviceId)
+        // loadData() // subscribeToItems will handle UI update
+      } catch (err) {
+        console.error('Simulation failed:', err)
+      }
+    }, 60000) // 1 minute = 1 day simulation
+    return () => clearInterval(interval)
+  }, [deviceId])
+
   async function init() {
     if (!profile) await refreshProfile(user)
     if (!deviceId) {
@@ -232,7 +247,7 @@ export default function Dashboard() {
           ...prev,
           [itemId]: { ...prev[itemId], ...updates, is_live: true }
         }))
-        setToast({ type: 'success', message: `✅ ${itemId}: avg=${Math.round(updates.avg_consumption)}g/use | threshold=${Math.round(updates.threshold)}g | ~${updates.days_left} uses left` })
+        setToast({ type: 'success', message: `✅ ${itemId}: avg=${Math.round(updates.avg_consumption)}g/day | threshold=${Math.round(updates.threshold)}g | ~${updates.days_left} days left` })
       } else {
         setToast({ type: 'error', message: `Item not found. Please add the item first.` })
       }
@@ -353,7 +368,18 @@ export default function Dashboard() {
           <div className="space-y-3">
             {alerts.length > 0 ? (
               alerts.map((alert) => (
-                <AlertRow key={alert.id} alert={alert} />
+                <AlertRow 
+                  key={alert.id} 
+                  alert={alert} 
+                  onAction={async () => {
+                    if (alert.type === 'EXPIRY' && alert.item_id) {
+                      setRefreshing(true)
+                      await resetItemExpiry(deviceId, alert.item_id)
+                      setRefreshing(false)
+                      setToast({ type: 'success', message: `Reset expiry for ${alert.item_name}` })
+                    }
+                  }}
+                />
               ))
             ) : (
               <div className="card p-8 text-center bg-sage-50/50 border-dashed border-2">
@@ -474,22 +500,13 @@ function SlotCard({ slotId, item, deviceId, onRefill, onError, onAdd }) {
 
       {/* AI Metrics Section */}
       <div className="px-6 py-4 flex flex-col gap-2.5">
-        {/* Row 1: Threshold */}
-        <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-blue-50/50 border-blue-100/50 text-blue-600'}`}>
-          <div className="flex items-center gap-2">
-            <Bell className="w-3 h-3" />
-            <span className="uppercase tracking-wider">AI Threshold</span>
-          </div>
-          <span className="text-xs">{Math.round(item.threshold || 0)} {item.unit || 'g'}</span>
-        </div>
-
         {/* Row 2: Avg Rate */}
         <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-sky-50/50 border-sky-100/50 text-sky-600'}`}>
           <div className="flex items-center gap-2">
             <Zap className="w-3 h-3" />
             <span className="uppercase tracking-wider">Avg Usage</span>
           </div>
-          <span className="text-xs">{Math.round(item.avg_consumption || 0)}{item.unit || 'g'} / use</span>
+          <span className="text-xs">{Math.round(item.avg_consumption || 0)}{item.unit || 'g'} / day</span>
         </div>
 
         {/* Row 3: Estimated Time */}
@@ -498,11 +515,71 @@ function SlotCard({ slotId, item, deviceId, onRefill, onError, onAdd }) {
             <Clock className="w-3 h-3" />
             <span className="uppercase tracking-wider">Estimated</span>
           </div>
-          <span className="text-xs">~{daysLeft} uses left</span>
+          <span className="text-xs">~{daysLeft} days left</span>
+        </div>
+
+        {/* Row 4: Expiry Days Left (Simulated: 30s = 1 day) */}
+        <div className={`flex items-center justify-between text-[10px] font-bold px-3 py-2 rounded-xl border ${isLow ? 'bg-red-100/60 border-red-200/60 text-red-600' : 'bg-emerald-50/50 border-emerald-100/50 text-emerald-600'}`}>
+          <div className="flex items-center gap-2">
+            <Calendar className="w-3 h-3" />
+            <span className="uppercase tracking-wider">Expiry Left</span>
+          </div>
+          <span className="text-xs">
+            <ExpiryCountdown expiryDate={item.expiry_date} />
+          </span>
         </div>
       </div>
     </div>
   )
+}
+
+function ExpiryCountdown({ expiryDate }) {
+  const [now, setNow] = useState(Date.now());
+  const mountTime = useRef(Date.now());
+
+  useEffect(() => {
+    // Reset simulation starting point whenever the base expiry date changes (e.g. after a refill)
+    mountTime.current = Date.now();
+    
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000); // Update every second for smooth simulation
+    return () => clearInterval(timer);
+  }, [expiryDate]);
+
+  const getSimulatedDays = () => {
+    let expiryDateObj;
+    if (expiryDate) {
+      expiryDateObj = new Date(expiryDate);
+    } else {
+      expiryDateObj = new Date();
+      expiryDateObj.setDate(expiryDateObj.getDate() + 30);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Base days left in real world
+    const realDiffDays = Math.ceil((expiryDateObj - today) / (1000 * 60 * 60 * 24));
+    
+    // Simulation: 1 minute = 1 day
+    // Time passed since mount in "simulated days"
+    const elapsedMs = now - mountTime.current;
+    const simulatedDaysPassed = elapsedMs / 60000; // 60,000ms = 1 day
+    
+    const simulatedDaysLeft = realDiffDays - simulatedDaysPassed;
+
+    if (simulatedDaysLeft <= 0) return "Expired";
+    if (simulatedDaysLeft < 1) {
+      // Show fractional hours/minutes if less than a day for "wow" factor
+      const hoursLeft = Math.floor(simulatedDaysLeft * 24);
+      return hoursLeft > 0 ? `${hoursLeft}h left` : "Expiring soon";
+    }
+    
+    return `${Math.floor(simulatedDaysLeft)} days`;
+  };
+
+  return <span>{getSimulatedDays()}</span>;
 }
 
 function RefillButton({ item, deviceId, onRefill, onError }) {
@@ -581,12 +658,12 @@ function RefillButton({ item, deviceId, onRefill, onError }) {
   )
 }
 
-function AlertRow({ alert }) {
+function AlertRow({ alert, onAction }) {
   const isExpiry = alert.type === 'EXPIRY'
   const Icon = isExpiry ? Clock : AlertTriangle
 
   return (
-    <div className="card p-5 flex items-center gap-5 hover:shadow-md transition-shadow cursor-default group border-sage-100">
+    <div className="card p-5 flex items-center gap-5 hover:shadow-md transition-shadow cursor-default group border-sage-100 relative overflow-hidden">
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-105 ${
         isExpiry ? 'bg-amber-100 text-amber-600' : 'bg-rust-100 text-rust-600'
       }`}>
@@ -602,6 +679,15 @@ function AlertRow({ alert }) {
         </div>
         <p className="text-sage-900 font-bold text-sm truncate font-body">{alert.message}</p>
       </div>
+      
+      {isExpiry && (
+        <button 
+          onClick={onAction}
+          className="btn-secondary !py-2 !px-4 !text-[10px] !rounded-xl border-amber-200 text-amber-700 hover:bg-amber-50"
+        >
+          Dismiss & Reset
+        </button>
+      )}
     </div>
   )
 }

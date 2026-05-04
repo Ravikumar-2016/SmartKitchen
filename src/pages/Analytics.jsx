@@ -57,10 +57,26 @@ export default function Analytics() {
         const chartData = []
         let colorIdx = 0
         items.forEach(item => {
-          const slotConsumption = currentData.consumption?.[item.id]?.total_consumed || 0
+          // Assuming 10x avg consumption = item consumption for simulation/initial view
+          const slotConsumption = (item.avg_consumption * 10) || currentData.consumption?.[item.id]?.total_consumed || 0
+          const pricePerKg = item.price_per_unit || 0
+          
+          // Convert consumption to KG if unit is 'g' (standard in this app)
+          const consumptionInKg = (item.unit === 'kg' || item.unit === 'pcs') ? slotConsumption : slotConsumption / 1000
+          
+          const isExpired = item.expiry_date && (new Date(item.expiry_date) <= new Date())
+          const waste = isExpired ? (item.current_quantity || 0) : 0
+          const wasteInKg = (item.unit === 'kg' || item.unit === 'pcs') ? waste : waste / 1000
+          const wasteCost = wasteInKg * pricePerKg
+
           chartData.push({
             name: item.name,
-            consumed: slotConsumption,
+            consumed: Math.round(slotConsumption),
+            cost: consumptionInKg * pricePerKg,
+            waste: Math.round(waste),
+            waste_cost: wasteCost,
+            unit: item.unit || 'g',
+            price_per_kg: pricePerKg,
             color: CHART_COLORS[colorIdx % CHART_COLORS.length]
           })
           colorIdx++
@@ -69,7 +85,30 @@ export default function Analytics() {
       } else {
         const d = new Date()
         setCurrentMonth(d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).toUpperCase())
-        setData([])
+        
+        // Show simulated data even if no analytics record exists yet
+        const chartData = items.map((item, idx) => {
+          const consumption = Math.round(item.avg_consumption * 10)
+          const pricePerKg = item.price_per_unit || 0
+          const consumptionInKg = (item.unit === 'kg' || item.unit === 'pcs') ? consumption : consumption / 1000
+          
+          const isExpired = item.expiry_date && (new Date(item.expiry_date) <= new Date())
+          const waste = isExpired ? (item.current_quantity || 0) : 0
+          const wasteInKg = (item.unit === 'kg' || item.unit === 'pcs') ? waste : waste / 1000
+          const wasteCost = wasteInKg * pricePerKg
+
+          return {
+            name: item.name,
+            consumed: consumption,
+            cost: consumptionInKg * pricePerKg,
+            waste: Math.round(waste),
+            waste_cost: wasteCost,
+            unit: item.unit || 'g',
+            price_per_kg: pricePerKg,
+            color: CHART_COLORS[idx % CHART_COLORS.length]
+          }
+        })
+        setData(chartData)
       }
 
     } catch (err) {
@@ -202,8 +241,8 @@ export default function Analytics() {
       <section className="card p-8 min-h-[400px] border-none shadow-xl bg-white/50 backdrop-blur-sm">
         <div className="flex items-center justify-between mb-10">
           <div>
-            <h3 className="text-xl font-bold text-sage-950 font-display">Item Consumption (Current Month)</h3>
-            <p className="text-sm text-sage-400 font-medium font-body">Total grams/units consumed per slot</p>
+            <h3 className="text-xl font-bold text-sage-950 font-display">Monthly Consumption</h3>
+            <p className="text-sm text-sage-400 font-medium font-body">Current cycle usage metrics</p>
           </div>
           <div className="flex items-center gap-2 bg-sage-50 px-4 py-2 rounded-xl border border-sage-100">
              <Calendar className="w-4 h-4 text-sage-500" />
@@ -237,7 +276,7 @@ export default function Analytics() {
                           {payload[0].payload.name}
                         </p>
                         <p className="text-xl font-bold text-cream-50">
-                          {payload[0].value.toLocaleString()} <span className="text-xs text-sage-400 font-normal">g</span>
+                          {payload[0].value.toLocaleString()} <span className="text-xs text-sage-400 font-normal">{payload[0].payload.unit || 'g'}</span>
                         </p>
                       </div>
                     )
@@ -255,54 +294,131 @@ export default function Analytics() {
         </div>
       </section>
 
-      {/* Grid of secondary charts / stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <section className="card p-8 bg-sage-900 border-none text-cream-50 overflow-hidden relative">
-          <TrendingUp className="absolute -right-8 -bottom-8 w-48 h-48 opacity-[0.03] text-white" />
-          <div className="flex items-center gap-3 mb-6 relative z-10">
-            <div className="w-10 h-10 rounded-xl bg-sage-800 text-sage-300 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-lg font-bold font-display">Efficiency Score</h4>
-              <p className="text-sm text-sage-400 font-body">Usage stability index</p>
-            </div>
+      {/* Monthly Cost Chart */}
+      <section className="card p-8 min-h-[400px] border-none shadow-xl bg-white/50 backdrop-blur-sm">
+        <div className="flex items-center justify-between mb-10">
+          <div>
+            <h3 className="text-xl font-bold text-sage-950 font-display">Monthly Cost (Estimated)</h3>
+            <p className="text-sm text-sage-400 font-medium font-body">Spending based on consumption and unit price</p>
           </div>
-          <div className="flex items-center gap-6 relative z-10">
-             <div className="text-6xl font-bold font-display">84%</div>
-             <div className="space-y-1">
-                <p className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                  +12.4% vs last month
-                </p>
-                <p className="text-xs text-sage-400 font-body">Lower waste detected in Slot 1</p>
-             </div>
+          <div className="flex items-center gap-2 bg-cream-50 px-4 py-2 rounded-xl border border-cream-100">
+             <span className="text-xs font-bold text-sage-700">TOTAL: ₹{data.reduce((acc, curr) => acc + (curr.cost || 0), 0).toFixed(2)}</span>
           </div>
-        </section>
+        </div>
 
-        <section className="card p-8 bg-white/50 border-none shadow-xl">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-sage-100 text-sage-700 flex items-center justify-center">
-              <Info className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-lg font-bold text-sage-950 font-display">AI Forecast</h4>
-              <p className="text-sm text-sage-400 font-body">Predicted grocery run</p>
-            </div>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+              <XAxis 
+                dataKey="name" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#9fbf9f', fontSize: 12, fontWeight: 600 }}
+                dy={10}
+              />
+              <YAxis 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#9fbf9f', fontSize: 12, fontWeight: 600 }}
+              />
+              <Tooltip 
+                cursor={{ fill: '#f4f7f4' }}
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    return (
+                      <div className="bg-sage-900 p-4 rounded-2xl shadow-2xl border-none">
+                        <p className="text-[10px] font-bold text-sage-300 uppercase tracking-widest mb-1">
+                          {payload[0].payload.name}
+                        </p>
+                        <p className="text-xl font-bold text-cream-50">
+                          ₹{payload[0].value.toFixed(2)}
+                        </p>
+                        <p className="text-[10px] text-sage-400 mt-1">
+                          Rate: ₹{payload[0].payload.price_per_kg}/kg
+                        </p>
+                      </div>
+                    )
+                  }
+                  return null
+                }}
+              />
+              <Bar dataKey="cost" radius={[12, 12, 0, 0]} barSize={40}>
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill="#d97706" /> // Amber for cost
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* Waste Analysis Chart */}
+      <section className="card p-8 min-h-[400px] border-none shadow-xl bg-rust-50/30 backdrop-blur-sm border border-rust-100/20">
+        <div className="flex items-center justify-between mb-10">
+          <div>
+            <h3 className="text-xl font-bold text-rust-950 font-display">Waste Analysis</h3>
+            <p className="text-sm text-rust-400 font-medium font-body">Financial impact of expired items</p>
           </div>
-          <div className="space-y-5">
-             <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-sage-700 font-body">Estimated Restock</span>
-                <span className="text-sm font-bold text-sage-950 font-mono">In 4 Days</span>
-             </div>
-             <div className="h-2 bg-sage-100 rounded-full overflow-hidden">
-                <div className="h-full bg-sage-500 w-[70%] transition-all duration-1000" />
-             </div>
-             <p className="text-[10px] text-sage-400 font-body italic">
-               * Based on your consumption rate of Rice and Flour over the last 14 days.
-             </p>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2 bg-rust-50 px-4 py-2 rounded-xl border border-rust-100">
+               <span className="text-[10px] font-bold text-rust-700 uppercase tracking-widest">Total Loss: ₹{data.reduce((acc, curr) => acc + (curr.waste_cost || 0), 0).toFixed(2)}</span>
+            </div>
+            <span className="text-[9px] text-rust-400 mr-2">Total Qty: {data.reduce((acc, curr) => acc + (curr.waste || 0), 0)}g</span>
           </div>
-        </section>
-      </div>
+        </div>
+
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+              <XAxis 
+                dataKey="name" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#bf9f9f', fontSize: 12, fontWeight: 600 }}
+                dy={10}
+              />
+              <YAxis 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fill: '#bf9f9f', fontSize: 12, fontWeight: 600 }}
+              />
+              <Tooltip 
+                cursor={{ fill: '#f7f4f4' }}
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    return (
+                      <div className="bg-rust-900 p-4 rounded-2xl shadow-2xl border-none">
+                        <p className="text-[10px] font-bold text-rust-300 uppercase tracking-widest mb-1">
+                          {payload[0].payload.name}
+                        </p>
+                        <p className="text-xl font-bold text-cream-50">
+                          ₹{payload[0].payload.waste_cost?.toFixed(2)}
+                        </p>
+                        <p className="text-[10px] text-rust-300 mt-1 font-medium">
+                          {payload[0].value.toLocaleString()} {payload[0].payload.unit || 'g'} lost
+                        </p>
+                        <p className="text-[10px] text-rust-400 mt-1 italic">
+                          * Expired while in stock
+                        </p>
+                      </div>
+                    )
+                  }
+                  return null
+                }}
+              />
+              <Bar dataKey="waste" radius={[12, 12, 0, 0]} barSize={40}>
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill="#991b1b" /> // Deep red for waste
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+
     </div>
   )
 }

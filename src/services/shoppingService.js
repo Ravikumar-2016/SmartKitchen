@@ -17,14 +17,41 @@ export async function syncShoppingList(deviceId) {
 
   const items = await fetchItemsByDeviceId(deviceId)
   const itemsToBuy = items
-    .filter(item => item.current_quantity <= item.threshold && item.threshold > 0)
-    .map(item => ({
-      item_id: item.id,
-      item_name: item.name,
-      current_quantity: item.current_quantity,
-      required_quantity: item.capacity - item.current_quantity,
-      status: 'pending'
-    }))
+    .filter(item => {
+      const isLowStock = item.current_quantity <= item.threshold && item.threshold > 0
+      
+      // Calculate simulated expiry days
+      let isExpired = false
+      if (item.expiry_date) {
+        const expiryDate = new Date(item.expiry_date)
+        const today = new Date()
+        today.setHours(0,0,0,0)
+        if (expiryDate <= today) isExpired = true
+      }
+
+      const isEmpty = (item.days_left || 0) <= 0
+      
+      return isLowStock || isExpired || isEmpty
+    })
+    .map(item => {
+      const isExpired = item.expiry_date && (new Date(item.expiry_date) <= new Date())
+      const isEmpty = (item.days_left || 0) <= 0
+      
+      let requiredQty = item.capacity - item.current_quantity
+      
+      // Per user request: if expired=0 and days_left=0, set qty to avg_consumption * 8
+      if (isExpired && isEmpty) {
+        requiredQty = (item.avg_consumption || 0) * 8
+      }
+
+      return {
+        item_id: item.id,
+        item_name: item.name,
+        current_quantity: item.current_quantity,
+        required_quantity: Math.max(0, Math.round(requiredQty)),
+        status: 'pending'
+      }
+    })
 
   const listRef = doc(db, 'shopping_lists', deviceId)
   

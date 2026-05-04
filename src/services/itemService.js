@@ -24,7 +24,7 @@ import { syncShoppingList } from './shoppingService'
 import { updateMonthlyAnalytics } from './analyticsService'
 
 const ITEM_SLOTS = ['item_1', 'item_2', 'item_3', 'item_4']
-const NOISE_THRESHOLD = 4.0
+const NOISE_THRESHOLD = 5.0
 const BOX_TARE_WEIGHT = 25.0
 
 function round2(val) {
@@ -53,6 +53,7 @@ export async function processConsumptionEvent(deviceId, itemId, newWeight) {
   
   // Real weight is live weight minus box weight (25g)
   const curr = Math.max(0, rawWeight - BOX_TARE_WEIGHT)
+  console.log(`📡 [${itemId}] processConsumptionEvent called | rawWeight=${rawWeight}g | curr=${round2(curr)}g | persistentWeight=${round2(persistentWeight)}g`)
 
   let consumed = 0
   const batch = writeBatch(db)
@@ -63,19 +64,22 @@ export async function processConsumptionEvent(deviceId, itemId, newWeight) {
     const diff = persistentWeight - curr
     if (diff >= NOISE_THRESHOLD) {
       consumed = diff
+      console.log(`🥄 [${itemId}] Consumption: ${round2(diff)}g | prev=${round2(persistentWeight)}g → now=${round2(curr)}g`)
       
       // Smart Average (EMA): NewAvg = (consumed * 0.3) + (oldAvg * 0.7)
       // This adapts to habit changes faster than a simple average.
       if (avgConsumption === 0) {
         avgConsumption = consumed
+        console.log(`📊 [${itemId}] First avg set: ${round2(avgConsumption)}g/use`)
       } else {
         avgConsumption = (consumed * 0.3) + (avgConsumption * 0.7)
+        console.log(`📊 [${itemId}] EMA updated: ${round2(avgConsumption)}g/use`)
       }
 
       persistentWeight = curr
       
       // --- NEW: Track atomic monthly consumption (20 events = 1 month/cycle) ---
-      const stateRef = doc(db, 'analytics', normalizedDeviceId, 'state')
+      const stateRef = doc(db, 'analytics', normalizedDeviceId, 'meta', 'state')
       const stateSnap = await getDoc(stateRef)
       let currentCycle = 1
       let eventCount = 0
@@ -107,15 +111,34 @@ export async function processConsumptionEvent(deviceId, itemId, newWeight) {
         updated_at: serverTimestamp()
       }, { merge: true })
 
+      // --- NEW: Real-time Daily Consumption tracking ---
+      const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+      const dailyId = `${normalizedDeviceId}_${itemId}_${today}`
+      const dailyRef = doc(db, 'daily_consumption', dailyId)
+      batch.set(dailyRef, {
+        deviceId: normalizedDeviceId,
+        itemId: itemId,
+        date: today,
+        consumption: increment(consumed),
+        updated_at: serverTimestamp()
+      }, { merge: true })
     } else if (diff <= -10) {
+      // Refill detected
+      console.log(`🔄 [${itemId}] Refill: ${round2(persistentWeight)}g → ${round2(curr)}g`)
       persistentWeight = curr
+    } else {
+      // Noise — diff between -10 and NOISE_THRESHOLD, ignore
+      console.log(`🔕 [${itemId}] Noise ignored: diff=${round2(diff)}g (threshold=${NOISE_THRESHOLD}g)`)
     }
   }
 
-  const dynamicThreshold = avgConsumption > 0 ? round2(avgConsumption * 2) : 20
-  const daysLeft = avgConsumption > 0 ? Math.floor(curr / avgConsumption) : 30
+  const dynamicThreshold = avgConsumption > 0 ? round2(avgConsumption * 2) : (data.threshold ?? 20)
+  const daysLeft = avgConsumption > 0 ? Math.floor(curr / avgConsumption) : (data.days_left ?? 30)
 
-  const updates = {
+  console.log(`✅ [${itemId}] AI Result → avg=${round2(avgConsumption)}g/use | threshold=${dynamicThreshold}g | usesLeft=${daysLeft} | curr=${round2(curr)}g`)
+
+  // Firestore payload (includes serverTimestamp for DB write)
+  const firestoreUpdates = {
     current_quantity:  round2(curr),
     persistent_weight: round2(persistentWeight),
     avg_consumption:   round2(avgConsumption),
@@ -124,11 +147,19 @@ export async function processConsumptionEvent(deviceId, itemId, newWeight) {
     updated_at:        serverTimestamp(),
   }
 
+  // UI-safe payload (no serverTimestamp — safe to spread into React state)
+  const uiUpdates = {
+    current_quantity:  round2(curr),
+    persistent_weight: round2(persistentWeight),
+    avg_consumption:   round2(avgConsumption),
+    threshold:         dynamicThreshold,
+    days_left:         daysLeft,
+  }
+
   // Add main item update to batch
-  batch.set(itemRef, updates, { merge: true })
+  batch.set(itemRef, firestoreUpdates, { merge: true })
 
   // --- Recalculate ALL other slots' derived metrics ---
-  // We use Promise.all to fetch them, but batch.set to update them
   const otherSlotsSnapshots = await Promise.all(
     ITEM_SLOTS
       .filter(sid => sid !== itemId)
@@ -154,17 +185,18 @@ export async function processConsumptionEvent(deviceId, itemId, newWeight) {
     }, { merge: true })
   })
 
-  // Commit everything at once for a single UI refresh
+  // Commit everything at once
   await batch.commit()
 
-  // --- Trigger full inventory sync (alerts, shopping list, analytics) ---
+  // Trigger background sync (alerts, shopping list, analytics)
   try {
     await triggerInventorySync(normalizedDeviceId)
   } catch (err) {
     console.warn('Inventory sync failed (non-blocking):', err)
   }
 
-  return updates
+  // Return UI-safe object so Dashboard can apply it directly to React state
+  return uiUpdates
 }
 
 
@@ -229,12 +261,12 @@ export async function createItem(payload) {
   const unit = payload?.unit || 'g'
 
   const capacity = toNumber(payload?.capacity)
-  const threshold = toNumber(payload?.threshold ?? payload?.thresholdWeight)
+  const threshold = toNumber(payload?.threshold ?? payload?.thresholdWeight) ?? 20
 
   if (!name) throw new Error('Item name is required.')
   if (!deviceId) throw new Error('Device ID is required.')
   if (!capacity || capacity <= 0) throw new Error('Capacity must be greater than zero.')
-  if (threshold == null || threshold < 0) {
+  if (threshold < 0) {
     throw new Error('Threshold weight must be 0 or more.')
   }
   if (threshold > capacity) {
@@ -251,7 +283,7 @@ export async function createItem(payload) {
     {
       name,
       capacity,
-      threshold: 20, // Initial default, will be updated by AI logic
+      threshold, // Initial default, will be updated by AI logic
       unit,
       expiry_date: expiryDate,
       current_quantity: 0,
@@ -504,6 +536,8 @@ export async function resetDeviceSmartVariables(deviceId) {
   analyticsSnap.docs.forEach((d) => {
     promises.push(deleteDoc(d.ref))
   })
+  // Also clear the cycle state tracker
+  promises.push(deleteDoc(doc(db, 'analytics', normalizedDeviceId, 'meta', 'state')))
 
   // 4. Clear all alerts (top-level 'alerts' collection)
   const alertsRef = collection(db, 'alerts')

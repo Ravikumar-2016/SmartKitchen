@@ -87,8 +87,8 @@ export default async function handler(request, response) {
         const endStr = formatISTString(windowEndIST);
 
         const querySnapshot = await readingsRef
-          .where('timestamp', '>=', startStr)
-          .where('timestamp', '<', endStr)
+          .where('timestamp', '>=', windowStart)
+          .where('timestamp', '<', windowEnd)
           .orderBy('timestamp', 'asc')
           .get();
 
@@ -131,7 +131,7 @@ export default async function handler(request, response) {
           } else {
             const diff = persistentWeight - settledWeight;
             
-            if (diff >= 5) {
+            if (diff >= 5.0) {
               // Valid Consumption Event: current < previous by 5g or more
               current_window_consumption = diff;
               
@@ -158,7 +158,8 @@ export default async function handler(request, response) {
         const dynamicThreshold = avgConsumption > 0 ? round2(avgConsumption * 2) : 20;
 
         // Calculate Days Left (Default to 30 if no avg yet)
-        const daysLeft = avgConsumption > 0 ? Math.floor(settledWeight / avgConsumption) : 30;
+        const currentQtyForCalc = settledWeight !== null ? settledWeight : Number(itemData.current_quantity ?? 0);
+        const daysLeft = avgConsumption > 0 ? Math.floor(currentQtyForCalc / avgConsumption) : 30;
 
         // Update Item Document (Maintain all 5 core variables)
         await itemRef.set({

@@ -21,7 +21,7 @@ const firebaseConfig = {
   apiKey:            requiredEnv('VITE_FIREBASE_API_KEY'),
   authDomain:        requiredEnv('VITE_FIREBASE_AUTH_DOMAIN'),
   projectId:         requiredEnv('VITE_FIREBASE_PROJECT_ID'),
-  databaseURL:       requiredEnv('VITE_FIREBASE_DATABASE_URL'),
+  databaseURL:       import.meta.env.VITE_FIREBASE_DATABASE_URL,
   storageBucket:     requiredEnv('VITE_FIREBASE_STORAGE_BUCKET'),
   messagingSenderId: requiredEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
   appId:             requiredEnv('VITE_FIREBASE_APP_ID'),

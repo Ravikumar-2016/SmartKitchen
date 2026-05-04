@@ -2,13 +2,12 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD0qQ3wuCrC-0zQPUaRN5RPrpImRVMlgO4",
-  authDomain: "smartkitchen-8c101.firebaseapp.com",
-  projectId: "smartkitchen-8c101",
-  databaseURL: "https://smartkitchen-8c101-default-rtdb.asia-southeast1.firebasedatabase.app",
-  storageBucket: "smartkitchen-8c101.firebasestorage.app",
-  messagingSenderId: "702839426372",
-  appId: "1:702839426372:web:85e0c92766e4b50f939b11",
+  apiKey: "AIzaSyDJvF_9cpWpfVpHedKVtxvxYdetGVu7lLA",
+  authDomain: "smart-kitchen-935d1.firebaseapp.com",
+  projectId: "smart-kitchen-935d1",
+  storageBucket: "smart-kitchen-935d1.firebasestorage.app",
+  messagingSenderId: "1026838934043",
+  appId: "1:1026838934043:web:ee64e8e11859236783bebe",
 };
 
 const app = initializeApp(firebaseConfig);

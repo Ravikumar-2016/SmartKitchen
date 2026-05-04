@@ -16,7 +16,7 @@ export default function AddItem() {
     name: '',
     itemId: location.state?.slotId || 'item_1',
     capacity: '',
-    threshold: '',
+    capacity: '',
     expiry_date: '',
     unit: 'g'
   })
@@ -151,20 +151,7 @@ export default function AddItem() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-sage-400 uppercase tracking-widest px-1 flex items-center gap-2">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Threshold
-                </label>
-                <input
-                  type="number"
-                  name="threshold"
-                  placeholder="Notify me below..."
-                  className="input-field"
-                  value={formData.threshold}
-                  onChange={handleChange}
-                  required
-                />
-              </div>
+
 
               <div className="space-y-2 md:col-span-2">
                 <label className="text-xs font-bold text-sage-400 uppercase tracking-widest px-1 flex items-center gap-2">

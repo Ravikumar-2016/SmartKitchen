@@ -91,28 +91,15 @@ export default function Dashboard() {
       // Real weight = Live Weight - Box Weight (25g)
       const weight = Math.max(0, Number(weightRaw) - 25)
 
-      // 1. Update live weight on UI immediately
-      setItems(prev => {
-        const item = prev[itemId]
-        if (!item) return prev
-        return {
-          ...prev,
-          [itemId]: { ...item, current_quantity: weight, current_weight: weight, is_live: true }
-        }
-      })
-
-      // 2. Only process consumption when weight drops by >=4g from last reading
-      // Track RAW weight for accurate diffs and processing
-      const prev = slotPrevWeightRef.current[itemId]
       const currRaw = Number(weightRaw)
+      const prev = slotPrevWeightRef.current[itemId]
       const prevVal = Number(prev ?? 0)
 
-      if (currRaw < 10) return // Box is lifted, don't update prev or process consumption
+      if (currRaw < 10) return // Box is lifted
 
-      // Initialize on first reading
+      // Initialize on first reading after reset or load
       if (prev === undefined) {
         slotPrevWeightRef.current[itemId] = currRaw
-        // Send initial weight to backend so persistentWeight isn't 0
         try {
           await processConsumptionEvent(deviceId, itemId, currRaw)
         } catch (err) {
@@ -122,13 +109,37 @@ export default function Dashboard() {
       }
 
       const diff = prevVal - currRaw
-      if (diff >= 4.0 || diff <= -10) {
-        // Weight changed meaningfully (consumption or refill) — process it
+      if (diff >= 5.0 || diff <= -10) {
+        // Weight changed meaningfully (consumption or refill)
         slotPrevWeightRef.current[itemId] = currRaw
+        
+        // Update UI only on meaningful change
+        setItems(prev => {
+          const item = prev[itemId]
+          if (!item) return prev
+          return {
+            ...prev,
+            [itemId]: { ...item, current_quantity: weight, current_weight: weight, is_live: true }
+          }
+        })
+
         try {
-          await processConsumptionEvent(deviceId, itemId, currRaw)
+          const updates = await processConsumptionEvent(deviceId, itemId, currRaw)
+          if (updates) {
+            console.log(`🖥️ [${itemId}] Dashboard updating UI:`, JSON.stringify(updates))
+            setItems(prev => ({
+              ...prev,
+              [itemId]: { 
+                ...prev[itemId], 
+                ...updates,
+                is_live: true
+              }
+            }))
+          } else {
+            console.warn(`⚠️ [${itemId}] processConsumptionEvent returned null — check Firestore item exists`)
+          }
         } catch (err) {
-          console.error('Consumption processing error:', err)
+          console.error(`❌ [${itemId}] Consumption processing error:`, err)
         }
       }
     })
@@ -199,12 +210,35 @@ export default function Dashboard() {
     setRefreshing(true)
     try {
       await resetDeviceSmartVariables(deviceId)
+      // Clear local weight cache so the next reading re-initializes the system
+      slotPrevWeightRef.current = {}
       setToast({ type: 'success', message: '✅ Total Reset complete. Everything cleared. AI is starting fresh.' })
       await init()
     } catch (err) {
       setToast({ type: 'error', message: err.message })
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  const handleConsumption = async (itemId, newWeightGrams) => {
+    const rawWeight = newWeightGrams + 25
+    console.log(`🎯 [${itemId}] Manual weight set: ${newWeightGrams}g content → rawWeight=${rawWeight}g sent to AI`)
+    try {
+      const updates = await processConsumptionEvent(deviceId, itemId, rawWeight)
+      if (updates) {
+        console.log(`🖥️ [${itemId}] Manual UI update:`, JSON.stringify(updates))
+        setItems(prev => ({
+          ...prev,
+          [itemId]: { ...prev[itemId], ...updates, is_live: true }
+        }))
+        setToast({ type: 'success', message: `✅ ${itemId}: avg=${Math.round(updates.avg_consumption)}g/use | threshold=${Math.round(updates.threshold)}g | ~${updates.days_left} uses left` })
+      } else {
+        setToast({ type: 'error', message: `Item not found. Please add the item first.` })
+      }
+    } catch (err) {
+      console.error(`❌ [${itemId}] Manual consumption error:`, err)
+      setToast({ type: 'error', message: err.message })
     }
   }
 
@@ -235,14 +269,8 @@ export default function Dashboard() {
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="badge bg-sage-100 text-sage-700 uppercase tracking-tighter">Kitchen Overview</span>
-            <div className="flex items-center gap-1.5 ml-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-bold text-sage-400 uppercase tracking-widest">System Online</span>
-            </div>
-          </div>
-          <h2 className="text-4xl font-bold text-sage-950">
+
+          <h2 className="text-4xl font-bold text-sage-950 mt-4">
             Welcome, <span className="text-sage-600">{profile?.name || 'Manager'}</span>
           </h2>
           <p className="text-sage-500 mt-2 max-w-md font-body">
@@ -251,14 +279,7 @@ export default function Dashboard() {
         </div>
         
         <div className="flex items-center gap-3">
-          <button 
-            onClick={handleProcessAI}
-            title="Process AI Metrics Now"
-            disabled={refreshing}
-            className={`btn-secondary p-4 rounded-2xl shadow-sm border-emerald-100 text-emerald-600 hover:bg-emerald-50 ${refreshing ? 'animate-pulse' : ''}`}
-          >
-            <Brain className="w-5 h-5" />
-          </button>
+
           <button 
             onClick={handleReset}
             title="Reset AI Training"
@@ -273,13 +294,15 @@ export default function Dashboard() {
           >
             <RefreshCcw className="w-5 h-5 text-sage-600" />
           </button>
-          <button 
-            onClick={() => navigate('/add-item')}
-            className="btn-primary flex items-center gap-3 shadow-lg shadow-sage-900/10 h-[56px] px-8"
-          >
-            <Plus className="w-5 h-5" />
-            Add Item
-          </button>
+          {Object.keys(items).length < 4 && (
+            <button 
+              onClick={() => navigate('/add-item')}
+              className="btn-primary flex items-center gap-3 shadow-lg shadow-sage-900/10 h-[56px] px-8"
+            >
+              <Plus className="w-5 h-5" />
+              Add Item
+            </button>
+          )}
         </div>
       </header>
 

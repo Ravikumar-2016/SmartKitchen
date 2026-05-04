@@ -1,14 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, updateDoc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDJvF_9cpWpfVpHedKVtxvxYdetGVu7lLA",
-  authDomain: "smart-kitchen-935d1.firebaseapp.com",
-  projectId: "smart-kitchen-935d1",
-  storageBucket: "smart-kitchen-935d1.firebasestorage.app",
-  messagingSenderId: "1026838934043",
-  appId: "1:1026838934043:web:ee64e8e11859236783bebe"
-};
+import { firebaseConfig } from './config.js';
+
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
